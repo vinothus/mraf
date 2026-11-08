@@ -1,0 +1,43 @@
+mainmenu "MRAF Farm Controller"
+
+menu "MRAF application"
+
+config MRAF_HTTP_PORT
+	int "HTTP server port"
+	default 8080 if ARCH_POSIX
+	default 80
+	range 1 65535
+
+config MRAF_SIMULATOR
+	bool "Build the simulator controls (/api/sim/*)"
+	default y if ARCH_POSIX
+	help
+	  Enables the hardware simulation endpoints. They are inert on real
+	  hardware but still compiled so the shared API code is identical.
+
+config MRAF_SETTINGS_PATH
+	string "Configuration file path (native_sim only)"
+	default "mraf-settings.json"
+
+config MRAF_NTP_SERVER
+	string "SNTP server used at boot"
+	default "pool.ntp.org"
+
+config MRAF_SETTINGS_JSON_MAX
+	int "Maximum persisted configuration size"
+	default 8192
+	range 1024 65536
+
+config MRAF_HTTP_REQ_MAX
+	int "Maximum HTTP request body size"
+	default 8192
+	range 512 65536
+
+config MRAF_HTTP_RESP_MAX
+	int "Maximum HTTP response body size"
+	default 16384
+	range 1024 131072
+
+endmenu
+
+source "Kconfig.zephyr"

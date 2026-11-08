@@ -1,0 +1,75 @@
+/*
+ * MRAF farm controller hardware mapping for the ESP32-DevKitC.
+ *
+ * The stock devkit devicetree reserves GPIO16/17 for PSRAM. The WROOM module
+ * used by this controller has no PSRAM and needs those pins for relay
+ * channels 2 and 3, so the reservation is relaxed below.
+ */
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pinctrl/esp32-pinctrl.h>
+
+/ {
+	zephyr,user {
+		io-channels = <&adc0 0>, <&adc0 3>;
+		io-channel-names = "battery", "current";
+	};
+};
+
+&gpio0 {
+	/* Free GPIO16/17 (relay 2 and 3); keep flash and unusable pins reserved. */
+	gpio-reserved-ranges = <6 6>, <20 1>, <24 1>, <28 4>;
+};
+
+&pinctrl {
+	i2c0_mraf: i2c0_mraf {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO4>, <I2C0_SCL_GPIO5>;
+			bias-pull-up;
+			drive-open-drain;
+		};
+	};
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	pinctrl-0 = <&i2c0_mraf>;
+	pinctrl-names = "default";
+	sda-gpios = <&gpio0 4 GPIO_OPEN_DRAIN>;
+	scl-gpios = <&gpio0 5 GPIO_OPEN_DRAIN>;
+
+	ds3231: ds3231@68 {
+		compatible = "maxim,ds3231-mfd";
+		reg = <0x68>;
+		status = "okay";
+
+		ds3231_rtc: ds3231_rtc {
+			compatible = "maxim,ds3231-rtc";
+			status = "okay";
+		};
+	};
+};
+
+&adc0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@3 {
+		reg = <3>;
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};

@@ -1,6 +1,11 @@
 # 05 - Build, flash and first boot
 
-## Toolchain
+> The production firmware now targets Zephyr RTOS. The Zephyr build and flash
+> commands are in [../okf/testing.md](../okf/testing.md) and the architecture is
+> in [../okf/zephyr-port.md](../okf/zephyr-port.md). The Arduino instructions
+> below remain valid for the reference implementation.
+
+## Arduino toolchain
 
 Tested with:
 

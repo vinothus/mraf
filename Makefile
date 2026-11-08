@@ -13,8 +13,16 @@ SCENARIO ?= none
 NODE ?= node
 NPM ?= npm
 MATTER_PORT ?= 5540
+ZEPHYR_VENV ?= /opt/zephyr-venv
+ZEPHYR_BASE ?= /opt/zephyrproject/zephyr
+ZEPHYR_BUILD_NATIVE ?= firmware/zephyr/build/native/zephyr/zephyr.exe
+ZEPHYR_BUILD_ESP32 ?= firmware/zephyr/build/esp32/zephyr/zephyr.bin
+ZEPHYR_E2E_PORT ?= 18080
+ZEPHYR_ESPTOOL ?= /opt/mraf-tools/arduino15/packages/esp32/tools/esptool_py/5.3.1
 
 .PHONY: all ui compile flash monitor test test-all test-cpp test-sim server-test \
+	zephyr-build zephyr-build-native zephyr-build-esp32 zephyr-run zephyr-e2e \
+	zephyr-test zephyr-flash zephyr-monitor \
 	server-build server-run matter-install matter-run matter-check matter-test \
 	sim sim-scenario diagrams wokwi clean help
 
@@ -50,7 +58,7 @@ test-sim:
 server-test:
 	cd server && mvn -q test
 
-test-all: test server-test
+test-all: test zephyr-e2e server-test
 
 server-build:
 	cd server && mvn -q -DskipTests package
@@ -70,6 +78,30 @@ matter-check:
 matter-test:
 	cd matter && $(NODE) --test test/*.test.mjs
 
+zephyr-build: zephyr-build-native zephyr-build-esp32
+
+zephyr-build-native:
+	./scripts/zephyr_build.sh native
+
+zephyr-build-esp32:
+	./scripts/zephyr_build.sh esp32
+
+zephyr-run: zephyr-build-native
+	./$(ZEPHYR_BUILD_NATIVE)
+
+zephyr-e2e: zephyr-build-native
+	MRAF_E2E_PORT="$(ZEPHYR_E2E_PORT)" python3 tests/test_zephyr_e2e.py
+
+zephyr-test: zephyr-e2e
+
+zephyr-flash: zephyr-build-esp32
+	PATH="$(ZEPHYR_VENV)/bin:$(ZEPHYR_ESPTOOL):$$PATH" ZEPHYR_BASE="$(ZEPHYR_BASE)" \
+		west flash -d firmware/zephyr/build/esp32 --esp-device "$(PORT)"
+
+zephyr-monitor:
+	PATH="$(ZEPHYR_VENV)/bin:$$PATH" \
+		python3 -m serial.tools.miniterm "$(PORT)" 115200
+
 sim:
 	python3 simulator/mraf_sim.py --speed "$(SPEED)" --port "$(HTTP_PORT)"
 
@@ -87,11 +119,11 @@ wokwi: ui
 	@echo "Open $(WOKWI_DIR)/diagram.json in the Wokwi extension or wokwi.com"
 
 clean:
-	rm -rf "$(BUILD_DIR)" "$(WOKWI_BUILD)" server/target simulator/__pycache__ tests/__pycache__
+	rm -rf "$(BUILD_DIR)" firmware/zephyr/build "$(WOKWI_BUILD)" server/target simulator/__pycache__ tests/__pycache__
 
 help:
 	@echo "make test                 run C++ schedule/controller tests and Python simulator tests"
-	@echo "make test-all             run firmware/simulator tests and Spring Boot tests"
+	@echo "make test-all             run firmware, Zephyr E2E and Spring Boot tests"
 	@echo "make server-test          run Spring Boot tests only"
 	@echo "make server-build         build server/target/mraf-server-1.0.0.jar"
 	@echo "make server-run           run the Spring Boot server on :8080"
@@ -102,6 +134,13 @@ help:
 	@echo "make compile              generate webui.h and compile the ESP32 firmware"
 	@echo "make flash PORT=/dev/ttyUSB0  compile and upload"
 	@echo "make monitor PORT=/dev/ttyUSB0"
+	@echo "make zephyr-build         build native_sim and ESP32 Zephyr firmware"
+	@echo "make zephyr-build-native  build the Zephyr native_sim firmware"
+	@echo "make zephyr-build-esp32   build the Zephyr ESP32 firmware"
+	@echo "make zephyr-run           run the Zephyr native_sim firmware on :8080"
+	@echo "make zephyr-e2e           build and run end-to-end REST API tests"
+	@echo "make zephyr-flash PORT=/dev/ttyUSB0  build and flash the ESP32"
+	@echo "make zephyr-monitor PORT=/dev/ttyUSB0"
 	@echo "make sim                  native simulator on http://localhost:8080"
 	@echo "make sim-scenario SCENARIO=pump-morning"
 	@echo "make diagrams             regenerate SVG wiring diagrams"

@@ -110,7 +110,32 @@ The ESP32 firmware and CoAP protocol stay unchanged. See
 [docs/12-matter-bridge.md](docs/12-matter-bridge.md) for endpoint mapping,
 pulse relays, configuration and troubleshooting.
 
-## Quick start: firmware
+## Quick start: Zephyr firmware
+
+The production firmware targets Zephyr RTOS and builds for both the ESP32 and a
+native Linux simulator:
+
+```bash
+make zephyr-build-native
+make zephyr-e2e          # build native_sim and run REST E2E tests
+make zephyr-build-esp32  # cross-compile for ESP32
+make zephyr-flash PORT=/dev/ttyUSB0
+make zephyr-monitor PORT=/dev/ttyUSB0
+```
+
+The native build serves the dashboard on `http://127.0.0.1:8080`. ESP32 builds
+need the Espressif HAL blobs once:
+
+```bash
+cd /opt/zephyrproject && west blobs fetch hal_espressif
+```
+
+See [okf/zephyr-port.md](okf/zephyr-port.md) for the architecture and
+[okf/testing.md](okf/testing.md) for the full build and test guide. A short
+recorded walkthrough is at
+[docs/demo/zephyr-native-demo.mp4](docs/demo/zephyr-native-demo.mp4).
+
+## Quick start: Arduino reference firmware
 
 ```bash
 ./scripts/setup_toolchain.sh
@@ -185,7 +210,8 @@ This project switches lethal 230/415 V AC. It is not a certified product.
 ## Repository layout
 
 ```text
-firmware/mraf/         ESP32 sketch, controller, settings, RTC, webui.h
+firmware/zephyr/       Zephyr firmware (production target)
+firmware/mraf/         Arduino-ESP32 reference firmware
 web/index.html         shared dashboard used by firmware and simulator
 server/                Spring Boot CoAP server and browser dashboard
 matter/                optional Node.js Matter bridge for the server
@@ -214,6 +240,7 @@ docs/                  requirements, wiring, firmware, API, operation, video
 10. [Remote Java server over CoAP](docs/10-remote-coap.md)
 11. [Spring Boot server and dashboard](docs/11-springboot-server.md)
 12. [Matter bridge](docs/12-matter-bridge.md)
+13. [OKF knowledge base](okf/index.md)
 
 ## Verified in this workspace
 
@@ -225,6 +252,11 @@ docs/                  requirements, wiring, firmware, API, operation, video
 - Firmware compiles with Arduino-ESP32 3.3.12 and ArduinoJson 7.4.3:
   1,149,018 bytes (87% of the default 1,310,720-byte app partition), 72,268
   bytes of RAM (22%).
+- Zephyr native_sim firmware builds and serves the dashboard, status API and
+  simulator controls.
+- Zephyr ESP32 firmware builds with Wi-Fi, ADC, DS3231, NVS settings and mDNS.
+- `make zephyr-e2e`: 11 REST end-to-end tests pass against the Zephyr native
+  firmware.
 - Native simulator serves the dashboard, status API and pump scenario.
 - Matter bridge mapping tests pass (7 tests), and startup against the running
   server exposes 16 endpoints for `SIM-000001` (12 relays, pump, tank and sump).

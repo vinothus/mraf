@@ -1,5 +1,9 @@
 # 04 - Firmware architecture
 
+> The production firmware is the Zephyr port under `firmware/zephyr/`. See
+> [../okf/zephyr-port.md](../okf/zephyr-port.md) for its architecture. The
+> Arduino reference implementation is documented below.
+
 ## Files
 
 | File | Purpose |
