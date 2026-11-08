@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780">
+<rect width="1200" height="780" fill="#ffffff"/>
+<style>
+text { font-family: DejaVu Sans, Segoe UI, Arial, sans-serif; fill: #14202b; }
+.t { font-size: 26px; font-weight: 700; }
+.s { font-size: 14px; fill: #5b6b7a; }
+.b { font-size: 15px; font-weight: 700; }
+.n { font-size: 12.5px; }
+.small { font-size: 11.5px; fill: #5b6b7a; }
+.pin { font-size: 12px; font-family: DejaVu Sans Mono, Consolas, monospace; }
+.title { font-size: 26px; font-weight: 700; }
+</style>
+<text x="40" y="46" class="title">MRAF system block diagram</text>
+<text x="40" y="70" class="s">Off-the-shelf modules only. No custom PCB. Mains-derived relay rail; battery-backed controller rail.</text>
+<rect x="40" y="110" width="250" height="150" rx="10" fill="#fff4d6" stroke="#c99a2e" stroke-width="2"/>
+<text x="52" y="134" class="b">3-phase mains</text>
+<text x="52" y="155" class="n">415 V, 50 Hz, 3-phase + N + PE</text>
+<text x="52" y="173" class="n">5 HP borewell pump</text>
+<text x="52" y="191" class="n">Licensed electrician required</text>
+<rect x="340" y="110" width="230" height="150" rx="10" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="352" y="134" class="b">Protection</text>
+<text x="352" y="155" class="n">3-pole isolator 32 A</text>
+<text x="352" y="173" class="n">4-pole RCCB 40 A / 30 mA</text>
+<text x="352" y="191" class="n">3-pole MCB 16 A (C or D)</text>
+<text x="352" y="209" class="n">Phase-failure relay</text>
+<rect x="620" y="110" width="230" height="150" rx="10" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="632" y="134" class="b">DOL starter</text>
+<text x="632" y="155" class="n">9 A AC-3 contactor</text>
+<text x="632" y="173" class="n">Thermal overload 5.5-8 A</text>
+<text x="632" y="191" class="n">Set ~7 A (FLC 6.9 A)</text>
+<text x="632" y="209" class="n">RC snubber / MOV on coil</text>
+<rect x="900" y="110" width="260" height="150" rx="10" fill="#fff4d6" stroke="#c99a2e" stroke-width="2"/>
+<text x="912" y="134" class="b">Pump + field safety</text>
+<text x="912" y="155" class="n">5 HP 3-phase pump</text>
+<text x="912" y="173" class="n">E-stop (control chain)</text>
+<text x="912" y="191" class="n">Tank-full float (NC)</text>
+<text x="912" y="209" class="n">Sump-dry float (NC)</text>
+<line x1="290" y1="185" x2="338" y2="185" stroke="#33475b" stroke-width="2"/>
+<polygon points="338,185 328.9,189.2 328.9,180.8" fill="#33475b"/>
+<line x1="570" y1="185" x2="618" y2="185" stroke="#33475b" stroke-width="2"/>
+<polygon points="618,185 608.9,189.2 608.9,180.8" fill="#33475b"/>
+<line x1="850" y1="185" x2="898" y2="185" stroke="#33475b" stroke-width="2"/>
+<polygon points="898,185 888.9,189.2 888.9,180.8" fill="#33475b"/>
+<rect x="40" y="330" width="250" height="175" rx="10" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="52" y="354" class="b">Mains-derived 5 V rail</text>
+<text x="52" y="375" class="n">230 V AC -> 5 V 3 A SMPS</text>
+<text x="52" y="393" class="n">Feeds 16-ch relay coils</text>
+<text x="52" y="411" class="n">JD-VCC jumper removed</text>
+<text x="52" y="429" class="n">Drops out on power failure</text>
+<rect x="340" y="330" width="250" height="175" rx="10" fill="#e3f0ff" stroke="#4a7fb5" stroke-width="2"/>
+<text x="352" y="354" class="b">ESP32 controller</text>
+<text x="352" y="375" class="n">ESP32 DevKit V1 38-pin</text>
+<text x="352" y="393" class="n">Wi-Fi + HTTP server</text>
+<text x="352" y="411" class="n">NTP + DS3231 RTC</text>
+<text x="352" y="429" class="n">Schedules + pump state machine</text>
+<rect x="640" y="330" width="250" height="175" rx="10" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="652" y="354" class="b">Relay module</text>
+<text x="652" y="375" class="n">16-channel, 5 V, active-LOW</text>
+<text x="652" y="393" class="n">12 scheduled load outputs</text>
+<text x="652" y="411" class="n">1 dedicated pump output</text>
+<text x="652" y="429" class="n">Logic on 3.3 V, coils on 5 V</text>
+<rect x="940" y="330" width="220" height="175" rx="10" fill="#f1f4f7" stroke="#7d8b99" stroke-width="2"/>
+<text x="952" y="354" class="b">Loads</text>
+<text x="952" y="375" class="n">Lights, aerators, fans</text>
+<text x="952" y="393" class="n">Drip valves / pump starter</text>
+<text x="952" y="411" class="n">All loads drop on outage</text>
+<text x="952" y="429" class="n">Manual override + boost</text>
+<rect x="40" y="555" width="300" height="175" rx="10" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="52" y="579" class="b">Battery-backed 5 V rail</text>
+<text x="52" y="600" class="n">12.8 V LiFePO4 + LiFePO4 charger</text>
+<text x="52" y="618" class="n">LVD protects battery</text>
+<text x="52" y="636" class="n">5 V buck -> ESP32 / sensors</text>
+<text x="52" y="654" class="n">Pump never runs on battery</text>
+<rect x="400" y="555" width="270" height="175" rx="10" fill="#e3f0ff" stroke="#4a7fb5" stroke-width="2"/>
+<text x="412" y="579" class="b">Sensors</text>
+<text x="412" y="600" class="n">Mains presence (divider)</text>
+<text x="412" y="618" class="n">Tank-full / sump-dry floats</text>
+<text x="412" y="636" class="n">Battery voltage divider</text>
+<text x="412" y="654" class="n">ACS712-30 A + 2:1 divider</text>
+<rect x="730" y="555" width="430" height="175" rx="10" fill="#f1f4f7" stroke="#7d8b99" stroke-width="2"/>
+<text x="742" y="579" class="b">Operator interface</text>
+<text x="742" y="600" class="n">Built-in dashboard: http://mraf.local</text>
+<text x="742" y="618" class="n">AP fallback: MRAF-xxxxxx / farm1234</text>
+<text x="742" y="636" class="n">Basic auth: admin / farm1234 (change it)</text>
+<text x="742" y="654" class="n">REST API + native simulator</text>
+<line x1="165" y1="505" x2="165" y2="553" stroke="#33475b" stroke-width="2"/>
+<polygon points="165,553 160.8,543.9 169.2,543.9" fill="#33475b"/>
+<line x1="465" y1="505" x2="465" y2="553" stroke="#33475b" stroke-width="2"/>
+<polygon points="465,553 460.8,543.9 469.2,543.9" fill="#33475b"/>
+<line x1="415" y1="417" x2="638" y2="417" stroke="#33475b" stroke-width="2"/>
+<polygon points="638,417 628.9,421.2 628.9,412.8" fill="#33475b"/>
+<line x1="765" y1="417" x2="938" y2="417" stroke="#33475b" stroke-width="2"/>
+<polygon points="938,417 928.9,421.2 928.9,412.8" fill="#33475b"/>
+<line x1="585" y1="417" x2="637" y2="417" stroke="#33475b" stroke-width="2"/>
+<polygon points="637,417 627.9,421.2 627.9,412.8" fill="#33475b"/>
+<line x1="300" y1="417" x2="338" y2="417" stroke="#33475b" stroke-width="2"/>
+<polygon points="338,417 328.9,421.2 328.9,412.8" fill="#33475b"/>
+<circle cx="415" cy="417" r="4" fill="#33475b"/>
+<circle cx="585" cy="417" r="4" fill="#33475b"/>
+<rect x="40" y="750" width="1080" height="38" rx="8" fill="#fff4d6" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="52" y="772" class="n" text-anchor="start">Relay coils are on the mains rail by design: a power cut always de-energises every load.</text>
+</svg>

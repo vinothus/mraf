@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MRAF Controller</title>
+<style>
+:root{
+  --bg:#0d1412; --panel:#14201c; --panel2:#192822; --line:#263a32;
+  --txt:#e8f2ed; --muted:#8fa89d; --accent:#45d68a; --accent2:#2aa968;
+  --warn:#f0b84b; --danger:#ef6464; --blue:#5bb8ff; --violet:#b48cff;
+  --radius:14px; --shadow:0 8px 28px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--txt);
+  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+html{-webkit-text-size-adjust:100%}
+body{padding-bottom:40px}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;
+  justify-content:space-between;gap:12px;padding:12px 18px;
+  background:rgba(13,20,18,.92);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line)}
+.brand{font-size:20px;font-weight:800;letter-spacing:.5px}
+.brand span{font-weight:500;color:var(--muted);font-size:14px;margin-left:6px}
+.hdr-right{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.pill{padding:5px 10px;border:1px solid var(--line);border-radius:999px;
+  font-size:12px;color:var(--muted);background:var(--panel)}
+.pill.ok{color:var(--accent);border-color:#245c40}
+.pill.warn{color:var(--warn);border-color:#5c4a24}
+.pill.bad{color:var(--danger);border-color:#5c2424}
+nav{display:flex;gap:6px;padding:10px 14px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);background:var(--panel)}
+nav button{background:transparent;color:var(--muted);border:1px solid transparent;
+  padding:8px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+nav button:hover{color:var(--txt);background:var(--panel2)}
+nav button.active{color:#08130e;background:var(--accent);border-color:var(--accent)}
+main{max-width:1280px;margin:0 auto;padding:18px}
+h2{font-size:16px;margin:0}
+h3{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600;
+  text-transform:uppercase;letter-spacing:.08em}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:14px;box-shadow:var(--shadow)}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.stat .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.stat .v{font-size:20px;font-weight:700;margin-top:4px}
+.stat .s{font-size:12px;color:var(--muted);margin-top:2px}
+.badge{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;
+  background:#22352c;color:var(--accent);border:1px solid #2d4a3b}
+.badge.off{color:var(--muted);background:#1a2621;border-color:var(--line)}
+.badge.warn{color:var(--warn);border-color:#5c4a24;background:#2a2416}
+.badge.bad{color:var(--danger);border-color:#5c2424;background:#2a1717}
+.pump-readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.pump-readout label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.big{font-size:22px;font-weight:800;margin-top:2px}
+.fault{margin-top:10px;padding:10px 12px;border:1px solid #5c2424;background:#2a1717;
+  color:#ffb3b3;border-radius:10px;font-weight:600}
+.interlocks{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.chip{font-size:12px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);
+  color:var(--muted);background:var(--panel2)}
+.chip.on{color:var(--warn);border-color:#5c4a24;background:#2a2416}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+button.action{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+  padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:600;font-size:13px}
+button.action:hover{border-color:var(--accent2)}
+button.action.primary{background:var(--accent);color:#07130d;border-color:var(--accent)}
+button.action.primary:hover{background:#54e69a}
+button.action.danger{color:#ffb3b3;border-color:#5c2424;background:#2a1717}
+button.action.small{padding:5px 9px;font-size:12px}
+.eq-card{position:relative;overflow:hidden}
+.eq-card::after{content:"";position:absolute;inset:auto 0 0;height:3px;background:var(--line)}
+.eq-card.on::after{background:var(--accent);box-shadow:0 0 18px var(--accent)}
+.eq-top{display:flex;align-items:center;gap:10px}
+.eq-name{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eq-zone{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.eq-state{font-size:12px;font-weight:700;color:var(--muted)}
+.eq-card.on .eq-state{color:var(--accent)}
+.eq-meta{font-size:12px;color:var(--muted);margin:8px 0 0}
+.pulsebox{display:flex;gap:6px;align-items:center;margin-top:8px}
+.pulsebox input{width:78px}
+section[hidden]{display:none}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.toolbar .spacer{flex:1}
+.sched-row{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px;margin-bottom:10px}
+.sched-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rnum{width:28px;height:28px;border-radius:8px;background:var(--panel2);
+  display:grid;place-items:center;font-weight:800;color:var(--accent);flex:0 0 auto}
+input,select{background:#0f1915;color:var(--txt);border:1px solid var(--line);
+  border-radius:9px;padding:8px 10px;font:inherit;min-width:0}
+input:focus,select:focus{outline:2px solid rgba(69,214,138,.35);border-color:var(--accent2)}
+input[type=checkbox]{width:16px;height:16px;padding:0;accent-color:var(--accent)}
+.wide{flex:1;min-width:160px}
+.days{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.days label{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--muted)}
+.windows{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.win{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.win span{color:var(--muted);font-size:13px}
+.win .time{width:120px}
+.settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.field label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+.events{display:flex;flex-direction:column;gap:6px}
+.event{display:flex;gap:10px;padding:9px 11px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;font-size:13px;align-items:baseline}
+.event .t{color:var(--muted);font-size:12px;white-space:nowrap}
+.event .src{color:var(--accent);font-weight:700;font-size:11px;text-transform:uppercase;
+  letter-spacing:.06em;min-width:52px}
+.sim{border-color:#3b3420}
+.rec-card{border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-bottom:10px;background:var(--panel)}
+.rec-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rec-cond{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.rec-chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.rec-chips label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);
+  border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:var(--panel2)}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(20px);
+  background:#1c2c25;border:1px solid var(--line);color:var(--txt);padding:11px 16px;
+  border-radius:12px;box-shadow:var(--shadow);opacity:0;pointer-events:none;
+  transition:.25s;z-index:50;max-width:90vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.small-note{font-size:12px;color:var(--muted)}
+
+/* ---- animated equipment icons ---- */
+.eq-icon{width:48px;height:48px;flex:0 0 auto;display:grid;place-items:center;
+  border-radius:12px;background:var(--panel2);border:1px solid var(--line);
+  position:relative;transition:border-color .2s,box-shadow .2s}
+.eq-card.on .eq-icon{border-color:#2d6b4c;box-shadow:0 0 18px rgba(69,214,138,.16)}
+.eq-icon svg{width:36px;height:36px;overflow:visible}
+.eq-icon .spin{transform-box:fill-box;transform-origin:center}
+.eq-icon.running .spin{animation:eq-spin 1.1s linear infinite}
+.eq-icon.running .spin-slow{animation:eq-spin 2.4s linear infinite}
+.eq-icon .bulb{fill:#42544b;transition:fill .2s}
+.eq-icon.running .bulb{fill:#ffd76a;filter:drop-shadow(0 0 7px #ffd76a)}
+.eq-icon .glow-ring{fill:none;stroke:#ffd76a;opacity:0;transition:opacity .2s}
+.eq-icon.running .glow-ring{opacity:.9;animation:eq-glow 1.8s ease-in-out infinite}
+.eq-icon .blade{fill:#5f7d70;transition:fill .2s}
+.eq-icon.running .blade{fill:#6fe3a4}
+.eq-icon .water{fill:#5bb8ff;opacity:.25}
+.eq-icon.running .water{opacity:1;animation:eq-drop 1.3s linear infinite}
+.eq-icon .water2{animation-delay:.45s}
+.eq-icon .water3{animation-delay:.9s}
+.eq-icon .heat{fill:none;stroke:#f0b84b;stroke-width:2;opacity:.35}
+.eq-icon.running .heat{opacity:1;animation:eq-heat 1.4s ease-in-out infinite}
+.eq-icon .door-panel{transform-box:fill-box;transform-origin:left center;transition:transform .3s}
+.eq-icon.running .door-panel{transform:perspective(60px) rotateY(-55deg)}
+.eq-icon.pulse{animation:eq-pulse .28s ease-in-out infinite}
+.eq-icon.running .motor-core{fill:#6fe3a4}
+@keyframes eq-spin{to{transform:rotate(360deg)}}
+@keyframes eq-glow{0%,100%{opacity:.35;stroke-width:1}50%{opacity:1;stroke-width:2}}
+@keyframes eq-drop{0%{transform:translateY(-4px);opacity:0}30%{opacity:1}100%{transform:translateY(9px);opacity:0}}
+@keyframes eq-heat{0%,100%{opacity:.25;transform:translateY(2px)}50%{opacity:1;transform:translateY(-2px)}}
+@keyframes eq-pulse{0%,100%{box-shadow:0 0 0 rgba(69,214,138,0)}50%{box-shadow:0 0 16px rgba(69,214,138,.55)}}
+@media (prefers-reduced-motion: reduce){.eq-icon *{animation:none!important}}
+@media (max-width:640px){
+  header{padding:8px 10px;gap:8px}.brand{font-size:18px;flex:0 0 auto}.brand span{display:none}
+  .hdr-right{flex:1 1 auto;min-width:0;flex-wrap:nowrap;justify-content:flex-start;
+    overflow-x:auto;scrollbar-width:none}
+  .hdr-right::-webkit-scrollbar{display:none}
+  .pill{flex:0 0 auto;font-size:11px;padding:5px 8px;white-space:nowrap}
+  nav{padding:8px 10px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  nav::-webkit-scrollbar{display:none}
+  nav button{flex:0 0 auto;min-height:42px;padding:9px 12px;white-space:nowrap}
+  main{padding:12px 10px}
+  .big{font-size:19px}
+  button.action{min-height:40px;padding:9px 12px}
+  button.action.small{min-height:36px;padding:7px 9px}
+  input:not([type=checkbox]),select{min-height:42px;font-size:16px}
+  input[type=checkbox]{width:18px;height:18px;min-height:0}
+  .row{min-height:36px}
+  .grid{grid-template-columns:minmax(0,1fr)}
+  .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .stats-grid .card:last-child{grid-column:1/-1}
+  .days{gap:4px}
+  .days label{min-height:36px;padding:0 3px;gap:6px}
+  .rec-chips label{min-height:36px;padding:6px 9px}
+  .settings-grid{grid-template-columns:minmax(0,1fr)}
+  .win .time{width:auto;flex:1 1 104px}
+  .pulsebox input{width:72px}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">MRAF <span id="brand-sub">Controller</span></div>
+  <div class="hdr-right">
+    <span id="conn" class="pill">connecting...</span>
+    <span id="profile-pill" class="pill">agri</span>
+    <span id="clock" class="pill">--:--</span>
+  </div>
+</header>
+
+<nav>
+  <button data-tab="dash" class="active">Dashboard</button>
+  <button data-tab="sched">Daily schedules</button>
+  <button data-tab="rec">Recurring</button>
+  <button data-tab="settings">Settings</button>
+  <button data-tab="events">Events</button>
+</nav>
+
+<main>
+  <section id="tab-dash">
+    <div class="grid stats-grid" style="margin-bottom:14px">
+      <div class="card stat"><div class="k">Mains / Battery</div><div class="v" id="stat-power">--</div><div class="s" id="stat-power-sub">--</div></div>
+      <div class="card stat"><div class="k">Wi-Fi</div><div class="v" id="stat-wifi">--</div><div class="s" id="stat-wifi-sub">--</div></div>
+      <div class="card stat"><div class="k">Remote server</div><div class="v" id="stat-remote">--</div><div class="s" id="stat-remote-sub">--</div></div>
+      <div class="card stat"><div class="k">Controller time</div><div class="v" id="stat-time">--</div><div class="s" id="stat-time-sub">--</div></div>
+      <div class="card stat"><div class="k">Active equipment</div><div class="v" id="stat-active">--</div><div class="s">of 12 mapped outputs</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-head">
+        <h2 id="pump-name">5HP Pump</h2>
+        <span id="pump-state" class="badge">--</span>
+      </div>
+      <div class="pump-readout">
+        <div><label>Motor current</label><div class="big" id="pump-current">-- A</div></div>
+        <div><label>Run time</label><div class="big" id="pump-runtime">--</div></div>
+        <div><label>Mode</label><div class="big" id="pump-mode">--</div></div>
+        <div><label>Schedule now</label><div class="big" id="pump-sched">--</div></div>
+      </div>
+      <div id="pump-fault" class="fault" hidden></div>
+      <div class="interlocks">
+        <span class="chip" id="chip-tank">tank full</span>
+        <span class="chip" id="chip-sump">sump dry</span>
+        <span class="chip" id="chip-ext">external run</span>
+        <span class="chip" id="chip-power">no power</span>
+      </div>
+      <div class="btnrow">
+        <button class="action" data-pump="auto">Auto</button>
+        <button class="action primary" data-pump="on">Manual ON</button>
+        <button class="action" data-pump="off">OFF</button>
+        <button class="action" data-pump="boost">Boost 30 min</button>
+        <button class="action danger" data-pump="reset">Reset fault</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <h2>Mapped equipment</h2><div class="spacer"></div>
+      <button class="action" data-all="auto">All Auto</button>
+      <button class="action danger" data-all="off">All OFF</button>
+      <button class="action" id="refresh">Refresh</button>
+    </div>
+    <div id="relays" class="grid"></div>
+
+    <div class="card sim" id="sim-panel" hidden style="margin-top:14px">
+      <div class="card-head"><h2>Simulator controls</h2><span class="pill">native digital twin</span></div>
+      <div class="settings-grid">
+        <div>
+          <label class="row" style="margin-bottom:8px"><input type="checkbox" id="sim-mains"> Mains present</label>
+          <label class="row" style="margin-bottom:8px"><input type="checkbox" id="sim-tank"> Tank full float</label>
+          <label class="row" style="margin-bottom:8px"><input type="checkbox" id="sim-sump"> Sump dry float</label>
+        </div>
+        <div>
+          <div class="field"><label>Pump current override</label>
+            <div class="row"><input type="checkbox" id="sim-current-auto" checked> <span>auto</span>
+              <input type="range" id="sim-current" min="0" max="12" step="0.1" value="6.8" style="flex:1">
+              <span id="sim-current-val">6.8 A</span></div>
+          </div>
+          <div class="field"><label>Simulated time speed</label>
+            <select id="sim-speed">
+              <option value="1">1x real time</option>
+              <option value="60" selected>60x (1 min/sec)</option>
+              <option value="300">300x (5 min/sec)</option>
+              <option value="3600">3600x (1 hr/sec)</option>
+            </select>
+          </div>
+          <div class="btnrow">
+            <button class="action" data-step="60">+1 min</button>
+            <button class="action" data-step="600">+10 min</button>
+            <button class="action" data-step="3600">+1 hr</button>
+          </div>
+        </div>
+      </div>
+      <div class="hint">The simulator runs the same schedule, pulse and pump logic as the ESP32 firmware.</div>
+    </div>
+  </section>
+
+  <section id="tab-sched" hidden>
+    <div class="toolbar">
+      <h2>Daily schedules &amp; equipment mapping</h2><div class="spacer"></div>
+      <label class="row"><input type="checkbox" id="pump-enabled"> Pump enabled</label>
+      <button class="action primary" id="save-config">Save all</button>
+    </div>
+    <div class="hint" style="margin-bottom:12px">Each relay is mapped to an equipment type and a location. Motor/contactor outputs can use a momentary pulse instead of a held relay.</div>
+    <div id="schedules"></div>
+    <h2 style="margin:18px 0 10px">5HP Pump schedule</h2>
+    <div id="pump-schedule"></div>
+  </section>
+
+  <section id="tab-rec" hidden>
+    <div class="toolbar">
+      <h2>Recurring schedules</h2><div class="spacer"></div>
+      <button class="action" id="add-rec">+ Add schedule</button>
+      <button class="action primary" id="save-rec">Save recurring</button>
+    </div>
+    <div class="hint" id="rec-hint" style="margin-bottom:12px">Day / week / month / year schedules. Choose the repeat, the from/to window, the action and the equipment.</div>
+    <div id="recurring"></div>
+  </section>
+
+  <section id="tab-settings" hidden>
+    <div class="toolbar"><h2>Settings</h2><div class="spacer"></div><button class="action primary" id="save-settings">Save settings</button></div>
+    <div class="settings-grid">
+      <div class="card">
+        <h3>Device &amp; profile</h3>
+        <div class="field"><label>Name</label><input id="set-name" class="wide"></div>
+        <div class="field"><label>Installation profile</label>
+          <select id="set-profile" class="wide">
+            <option value="agri">Agriculture (zones, valves, pumps)</option>
+            <option value="home">Home (rooms, lights, fans)</option>
+            <option value="godown">Godown (bays, lights, fans)</option>
+            <option value="industry">Industry (lines, machines, motors)</option>
+          </select>
+        </div>
+        <div class="field"><label>Timezone (POSIX, India = IST-5:30)</label><input id="set-tz" class="wide"></div>
+        <div class="field"><label>mDNS hostname</label><input id="set-host" class="wide"></div>
+        <div class="field"><label>Local login user</label><input id="set-user" class="wide"></div>
+        <div class="field"><label>New local password (blank = unchanged)</label><input id="set-pass" type="password" class="wide" placeholder="unchanged"></div>
+        <div class="field"><label>Device ID (sent to server)</label><input id="set-device-id" class="wide" readonly></div>
+      </div>
+      <div class="card">
+        <h3>Wi-Fi</h3>
+        <div class="field"><label>SSID</label><input id="set-ssid" class="wide" list="ssid-list"><datalist id="ssid-list"></datalist></div>
+        <div class="field"><label>New password (blank = unchanged)</label><input id="set-wifipass" type="password" class="wide" placeholder="unchanged"></div>
+        <div class="btnrow"><button class="action" id="scan-wifi">Scan Wi-Fi</button></div>
+        <div class="hint">Changing Wi-Fi, hostname or login reboots the controller. With no Wi-Fi it starts an access point: MRAF-xxxxxx / farm1234.</div>
+      </div>
+      <div class="card">
+        <h3>Remote server (open CoAP)</h3>
+        <div class="field"><label class="row"><input type="checkbox" id="set-coap-enabled"> Enable remote polling</label></div>
+        <div class="field"><label>Server host or IP</label><input id="set-coap-host" class="wide" placeholder="192.168.1.50"></div>
+        <div class="field"><label>Port</label><input id="set-coap-port" type="number" min="1" max="65535" value="5683"></div>
+        <div class="field"><label>Resource path</label><input id="set-coap-path" class="wide" placeholder="/mraf"></div>
+        <div class="field"><label>Poll interval (sec, server may override)</label><input id="set-coap-interval" type="number" min="10" max="3600" value="60"></div>
+        <div class="field"><label>Shared token (blank = unchanged)</label><input id="set-coap-token" type="password" class="wide" placeholder="unchanged"></div>
+        <div class="field"><label>Server login user</label><input id="set-remote-user" class="wide"></div>
+        <div class="field"><label>Server login password (blank = unchanged)</label><input id="set-remote-pass" type="password" class="wide" placeholder="unchanged"></div>
+        <div class="field"><label class="row"><input type="checkbox" id="set-register"> Request registration / admin confirmation</label></div>
+        <div class="hint">The ESP32 always calls out to the server. The server never connects in. Until an admin confirms the device, the server returns “waiting for confirmation”.</div>
+      </div>
+      <div class="card">
+        <h3>Pump protection</h3>
+        <div class="field"><label>Minimum off time (sec)</label><input id="set-minoff" type="number" min="30" max="3600"></div>
+        <div class="field"><label>Maximum continuous run (min)</label><input id="set-maxrun" type="number" min="1" max="720"></div>
+        <div class="field"><label>Power recovery delay (sec)</label><input id="set-recovery" type="number" min="0" max="600"></div>
+        <div class="field"><label>Dry-run current threshold (A)</label><input id="set-dry" type="number" min="0.5" max="20" step="0.1"></div>
+        <div class="field"><label>Dry-run grace (sec)</label><input id="set-grace" type="number" min="5" max="120"></div>
+        <div class="field"><label class="row"><input type="checkbox" id="set-resume"> Resume pump after power returns</label></div>
+        <div class="field"><label class="row"><input type="checkbox" id="set-tanklow"> Tank-full float is active LOW</label></div>
+        <div class="field"><label class="row"><input type="checkbox" id="set-sumplow"> Sump-dry float is active LOW</label></div>
+        <div class="field"><label>Max boost (min)</label><input id="set-maxboost" type="number" min="1" max="1440"></div>
+      </div>
+      <div class="card">
+        <h3>Time &amp; maintenance</h3>
+        <div class="field"><label>Set controller time (local)</label><input id="set-time" type="datetime-local"></div>
+        <div class="btnrow"><button class="action" id="apply-time">Set time</button></div>
+        <div class="hint" id="rtc-note">A DS3231 keeps time through power cuts. NTP corrects it when Wi-Fi is available.</div>
+        <hr style="border-color:var(--line);margin:16px 0">
+        <div class="btnrow"><button class="action danger" id="reboot">Reboot controller</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-events" hidden>
+    <div class="toolbar"><h2>Events</h2><div class="spacer"></div><button class="action" id="refresh-events">Refresh</button></div>
+    <div id="events" class="events"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const DAY_BITS = [1,2,4,8,16,32,64];
+const DAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const EQUIPMENT = ["valve","light","motor","fan","pump","socket","heater","door","other"];
+const EQ_LABEL = {valve:"Valve",light:"Light",motor:"Motor",fan:"Fan",pump:"Pump",
+  socket:"Socket",heater:"Heater",door:"Door",other:"Relay"};
+const REPEAT_LABEL = {daily:"Every day",weekly:"Every week",monthly:"Every month",yearly:"Every year"};
+const PROFILE_INFO = {
+  agri:{unit:"Zone",hint:"Agriculture: map relays to valves, pumps and zone lights."},
+  home:{unit:"Room",hint:"Home: map relays to rooms, lights, fans and geysers."},
+  godown:{unit:"Bay",hint:"Godown: map relays to bays, rack lights, fans and doors."},
+  industry:{unit:"Line",hint:"Industry: map relays to production lines, motors and contactors."}
+};
+let status = null;
+let config = null;
+let schedulesRendered = false;
+let recurringRendered = false;
+let lastEvents = [];
+
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const fmtA = (n) => Number(n || 0).toFixed(1) + " A";
+const fmtMin = (sec) => {
+  sec = Math.max(0, Math.floor(Number(sec)||0));
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+};
+const unitFor = () => (PROFILE_INFO[(config && config.device && config.device.profile) || "agri"] || PROFILE_INFO.agri).unit;
+
+function toast(msg, ms=3200){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>t.classList.remove("show"), ms);
+}
+
+async function api(path, opts={}){
+  const res = await fetch(path, {
+    cache: "no-store",
+    ...opts,
+    headers: {"Content-Type":"application/json", ...(opts.headers||{})}
+  });
+  let data = null;
+  try { data = await res.json(); } catch(e) { data = null; }
+  if(!res.ok){
+    const msg = data && data.error ? data.error : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+async function post(path, body){ return api(path, {method:"POST", body: JSON.stringify(body)}); }
+
+function setTab(name){
+  $$("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  ["dash","sched","rec","settings","events"].forEach(k => { $("#tab-"+k).hidden = (k !== name); });
+  if(name === "sched" && !schedulesRendered) renderSchedules();
+  if(name === "rec" && !recurringRendered) renderRecurring();
+}
+
+/* ---------------- animated equipment icons ---------------- */
+function eqIcon(kind, on, pulsing){
+  kind = EQUIPMENT.includes(kind) ? kind : "other";
+  const cls = `eq-icon ${kind} ${on ? "running" : ""} ${pulsing ? "pulse" : ""}`;
+  let art = "";
+  if(kind === "motor" || kind === "pump"){
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <circle cx="20" cy="20" r="13" fill="none" stroke="#456" stroke-width="2"/>
+      <g class="spin"><circle cx="20" cy="20" r="7" fill="#5f7d70" class="motor-core"/>
+      <path d="M20 8v6M20 26v6M8 20h6M26 20h6" stroke="#9fe7c2" stroke-width="2" stroke-linecap="round"/></g>
+      <circle cx="20" cy="20" r="2.5" fill="#c8f7de"/></svg>`;
+  } else if(kind === "fan"){
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <g class="spin"><path class="blade" d="M20 20c0-9 5-12 9-10 4 2 1 9-5 11z"/>
+      <path class="blade" d="M20 20c-8-4-12 0-11 4 1 4 8 3 11-2z"/>
+      <path class="blade" d="M20 20c8 4 12 0 11-4-1-4-8-3-11 2z"/></g>
+      <circle cx="20" cy="20" r="3" fill="#c8f7de"/></svg>`;
+  } else if(kind === "light"){
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <circle class="glow-ring" cx="20" cy="18" r="13"/>
+      <path class="bulb" d="M20 5a9 9 0 0 0-5 16c1 1 1.5 2 1.5 3h7c0-1 .5-2 1.5-3A9 9 0 0 0 20 5z"/>
+      <rect x="16" y="26" width="8" height="3" rx="1" fill="#8fa89d"/>
+      <rect x="17" y="30" width="6" height="3" rx="1" fill="#8fa89d"/></svg>`;
+  } else if(kind === "valve"){
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <path d="M4 18h10v4H4zM26 18h10v4H26z" fill="#5f7d70"/>
+      <circle cx="20" cy="20" r="8" fill="none" stroke="#9fe7c2" stroke-width="2"/>
+      <path class="water" d="M18 22c0 2 4 2 4 0v-5h-4z"/>
+      <circle class="water water2" cx="20" cy="12" r="1.6"/>
+      <circle class="water water3" cx="17" cy="9" r="1.3"/></svg>`;
+  } else if(kind === "heater"){
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <rect x="9" y="8" width="22" height="24" rx="4" fill="#42544b"/>
+      <path class="heat" d="M15 14c-2 3 2 4 0 7M20 14c-2 3 2 4 0 7M25 14c-2 3 2 4 0 7"/></svg>`;
+  } else if(kind === "door"){
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <rect x="10" y="6" width="20" height="28" rx="2" fill="#42544b"/>
+      <rect class="door-panel" x="12" y="8" width="16" height="24" rx="1" fill="#6fe3a4"/>
+      <circle cx="25" cy="20" r="1.4" fill="#0d1412"/></svg>`;
+  } else if(kind === "socket"){
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <circle cx="20" cy="20" r="12" fill="#42544b"/>
+      <circle cx="20" cy="20" r="12" fill="none" stroke="#9fe7c2" stroke-width="1.5"/>
+      <rect x="15" y="15" width="2.5" height="6" rx="1" fill="#c8f7de"/>
+      <rect x="22.5" y="15" width="2.5" height="6" rx="1" fill="#c8f7de"/></svg>`;
+  } else {
+    art = `<svg viewBox="0 0 40 40" aria-hidden="true">
+      <circle cx="20" cy="20" r="12" fill="none" stroke="#9fe7c2" stroke-width="2"/>
+      <path d="M20 12v16M12 20h16" stroke="#9fe7c2" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  return `<div class="${cls}">${art}</div>`;
+}
+
+function renderRelays(){
+  if(!status) return;
+  const host = $("#relays");
+  host.innerHTML = (status.relays||[]).map(r => {
+    const on = !!r.on;
+    const pulsing = !!r.pulsing;
+    const eq = r.equipment || "other";
+    const windows = (r.windows||[]).map(w=>esc(w.on)+"–"+esc(w.off)).join(", ") || "no daily window";
+    const meta = r.enabled
+      ? `${esc(EQ_LABEL[eq]||eq)} · ${esc(r.zone||"")} · ${esc(r.mode)} · ${windows}`
+      : "disabled";
+    const pulse = r.pulse_mode
+      ? `<div class="pulsebox"><span class="small-note">pulse</span>
+           <input type="number" class="pulse-ms" data-pulse-id="${r.id}" min="20" max="10000" step="50" value="${r.pulse_on_ms||600}"> ms
+         </div>
+         <div class="btnrow">
+           <button class="action small" data-relay="${r.id}" data-mode="on" data-pulse="1">Pulse ON</button>
+           <button class="action small danger" data-relay="${r.id}" data-mode="off" data-pulse="1">Pulse OFF</button>
+         </div>`
+      : `<div class="btnrow">
+           <button class="action small" data-relay="${r.id}" data-mode="auto">Auto</button>
+           <button class="action small" data-relay="${r.id}" data-mode="on">On</button>
+           <button class="action small" data-relay="${r.id}" data-mode="off">Off</button>
+         </div>`;
+    const stateText = on ? (pulsing ? "PULSE" : "RUNNING") : "OFF";
+    return `<div class="card eq-card ${on?"on":""}">
+      <div class="eq-top">
+        ${eqIcon(eq,on,pulsing)}
+        <div style="min-width:0;flex:1">
+          <div class="eq-name" title="${esc(r.name)}">${r.id}. ${esc(r.name)}</div>
+          <div class="eq-zone">${esc(r.zone||unitFor())}</div>
+        </div>
+        <span class="eq-state">${stateText}</span>
+      </div>
+      <div class="eq-meta">${meta}</div>
+      ${r.recurring ? `<div class="chip on" style="margin-top:7px">recurring schedule</div>` : ""}
+      ${pulse}
+      ${r.pulse_mode ? `<div class="btnrow"><button class="action small" data-relay="${r.id}" data-mode="auto">Auto</button></div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderDash(){
+  if(!status) return;
+  const p = status.power || {};
+  const w = status.wifi || {};
+  const pump = status.pump || {};
+  const rem = status.remote || {};
+  const active = (status.relays||[]).filter(r=>r.on).length;
+  const profile = (config && config.device && config.device.profile) || status.profile || "agri";
+
+  $("#brand-sub").textContent = (config && config.device && config.device.name) || "Controller";
+  $("#profile-pill").textContent = profile;
+  $("#profile-pill").className = "pill " + (profile === "agri" ? "ok" : "");
+
+  $("#conn").textContent = status.simulator ? "SIMULATOR" : (w.connected ? "online" : "offline");
+  $("#conn").className = "pill " + (w.connected || status.simulator ? "ok" : "bad");
+  $("#clock").textContent = status.now_local || "--";
+
+  $("#stat-power").textContent = p.present ? "Mains ON" : "Mains LOST";
+  $("#stat-power").style.color = p.present ? "var(--accent)" : "var(--danger)";
+  $("#stat-power-sub").textContent = p.battery_v > 2
+    ? `battery ${Number(p.battery_v).toFixed(2)} V${p.outage_sec?` · outage ${fmtMin(p.outage_sec)}`:""}`
+    : "battery monitor not fitted";
+
+  $("#stat-wifi").textContent = w.mode === "ap" ? "Access point" : (w.connected ? "Connected" : "Disconnected");
+  $("#stat-wifi").style.color = w.connected ? "var(--accent)" : "var(--warn)";
+  $("#stat-wifi-sub").textContent = `${w.ip || "--"}${w.rssi ? " · "+w.rssi+" dBm" : ""}`;
+
+  const rstat = rem.status || (rem.enabled ? (rem.last_ok ? "confirmed" : "waiting") : "off");
+  $("#stat-remote").textContent = rstat === "confirmed" ? "Confirmed" : rstat === "pending" ? "Pending" :
+    rstat === "rejected" ? "Rejected" : rstat === "denied" ? "Denied" :
+    rem.enabled ? "Waiting" : "Off";
+  $("#stat-remote").style.color = rstat === "confirmed" ? "var(--accent)" :
+    (rstat === "rejected" || rstat === "denied") ? "var(--danger)" :
+    rem.enabled ? "var(--warn)" : "var(--muted)";
+  $("#stat-remote-sub").textContent = rem.enabled
+    ? `${rem.host || "--"}:${rem.port || 5683} · every ${rem.interval_sec||60}s${rem.last_error ? " · "+rem.last_error : ""}`
+    : "set in Settings";
+
+  $("#stat-time").textContent = status.time_valid ? "Synced" : "NOT SET";
+  $("#stat-time").style.color = status.time_valid ? "var(--accent)" : "var(--danger)";
+  $("#stat-time-sub").textContent = status.time_valid ? `uptime ${fmtMin(status.uptime_sec)}` : "set time or connect Wi-Fi/NTP";
+  $("#stat-active").textContent = `${active} / 12`;
+
+  $("#pump-name").textContent = pump.name || "5HP Pump";
+  const state = pump.state || "IDLE";
+  const st = $("#pump-state");
+  st.textContent = state;
+  st.className = "badge " + (state==="FAULT"||state==="NO POWER" ? "bad" : (state==="RUNNING" ? "" : "off"));
+  $("#pump-current").textContent = fmtA(pump.current_a);
+  $("#pump-runtime").textContent = pump.on ? fmtMin(pump.run_sec) : "0m";
+  $("#pump-mode").textContent = pump.mode || "--";
+  $("#pump-sched").textContent = pump.schedule ? "IN WINDOW" : "outside";
+
+  const fault = $("#pump-fault");
+  if(pump.fault_latched && pump.fault){ fault.hidden=false; fault.textContent = pump.fault; }
+  else fault.hidden = true;
+
+  $("#chip-tank").classList.toggle("on", !!pump.tank_full);
+  $("#chip-sump").classList.toggle("on", !!pump.sump_dry);
+  $("#chip-ext").classList.toggle("on", !!pump.external_run);
+  $("#chip-power").classList.toggle("on", !p.present);
+
+  renderRelays();
+  renderEvents(status.events || []);
+}
+
+function renderEvents(events){
+  if(!events || !events.length) return;
+  lastEvents = events;
+  const host = $("#events");
+  host.innerHTML = events.slice().reverse().map(e =>
+    `<div class="event"><span class="t">${esc(e.time||"")}</span><span class="src">${esc(e.src||"")}</span><span>${esc(e.msg||"")}</span></div>`
+  ).join("");
+}
+
+function dayChecks(days, cls){
+  return DAY_NAMES.map((d,i)=>
+    `<label><input type="checkbox" class="${cls}" value="${i}" ${days & DAY_BITS[i] ? "checked":""}> ${d}</label>`
+  ).join("");
+}
+function windowsEditor(wins){
+  return `<div class="windows">${(wins||[]).map((w)=>windowRow(w.on,w.off)).join("")}</div>
+    <div class="btnrow"><button class="action small addwin" type="button">+ Add window</button></div>`;
+}
+function windowRow(on, off){
+  return `<div class="win">
+    <input type="time" class="on time" value="${esc(on||"06:00")}">
+    <span>to</span>
+    <input type="time" class="off time" value="${esc(off||"07:00")}">
+    <button class="action small danger delwin" type="button">Remove</button>
+  </div>`;
+}
+
+function equipmentOptions(selected){
+  return EQUIPMENT.map(e=>`<option value="${e}" ${selected===e?"selected":""}>${EQ_LABEL[e]}</option>`).join("");
+}
+
+function renderSchedules(){
+  if(!config) return;
+  const unit = unitFor();
+  const host = $("#schedules");
+  host.innerHTML = (config.channels||[]).map((ch,i)=>`
+    <div class="sched-row" data-index="${i}">
+      <div class="sched-head">
+        <span class="rnum">${i+1}</span>
+        <input class="name wide" value="${esc(ch.name)}" maxlength="23" placeholder="Equipment name">
+        <select class="equipment">${equipmentOptions(ch.equipment||"other")}</select>
+        <input class="zone" value="${esc(ch.zone||"")}" maxlength="23" placeholder="${unit}">
+        <label class="row"><input type="checkbox" class="enabled" ${ch.enabled?"checked":""}> enabled</label>
+        <select class="mode">
+          <option value="auto" ${ch.mode==="auto"?"selected":""}>auto</option>
+          <option value="on" ${ch.mode==="on"?"selected":""}>on</option>
+          <option value="off" ${ch.mode==="off"?"selected":""}>off</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:9px">
+        <label class="row"><input type="checkbox" class="pulse_mode" ${ch.pulse_mode?"checked":""}> momentary pulse (contactor / motor)</label>
+        <span class="small-note">ON pulse</span><input class="pulse_on_ms" type="number" min="20" max="10000" step="50" value="${ch.pulse_on_ms||600}" style="width:90px">
+        <span class="small-note">ms · OFF pulse</span><input class="pulse_off_ms" type="number" min="20" max="10000" step="50" value="${ch.pulse_off_ms||600}" style="width:90px"><span class="small-note">ms</span>
+      </div>
+      <div class="days">${dayChecks(ch.days||0,"day")}</div>
+      ${windowsEditor(ch.windows||[])}
+    </div>
+  `).join("");
+
+  const p = config.pump || {};
+  $("#pump-schedule").innerHTML = `
+    <div class="sched-row" data-pump-row="1">
+      <div class="sched-head">
+        <span class="rnum">P</span>
+        <input class="name wide" value="${esc(p.name||"5HP Pump")}" maxlength="23">
+        <select class="mode">
+          <option value="auto" ${p.mode==="auto"?"selected":""}>auto</option>
+          <option value="on" ${p.mode==="on"?"selected":""}>on</option>
+          <option value="off" ${p.mode==="off"?"selected":""}>off</option>
+        </select>
+      </div>
+      <div class="days">${dayChecks(p.days||0,"day")}</div>
+      ${windowsEditor(p.windows||[])}
+    </div>`;
+  $("#pump-enabled").checked = !!p.enabled;
+  schedulesRendered = true;
+}
+
+function recCondition(rs){
+  const rep = rs.repeat || "daily";
+  let html = "";
+  if(rep === "weekly"){
+    html += `<div class="days" style="margin:0">${DAY_NAMES.map((d,i)=>
+      `<label><input type="checkbox" class="rec-day" value="${i}" ${((rs.days||0)&DAY_BITS[i])?"checked":""}> ${d}</label>`).join("")}</div>`;
+  } else if(rep === "monthly"){
+    html += `<span class="small-note">day</span><input class="rec-dom" type="number" min="1" max="31" value="${rs.day_of_month||1}" style="width:80px">`;
+  } else if(rep === "yearly"){
+    html += `<span class="small-note">month</span><input class="rec-month" type="number" min="1" max="12" value="${rs.month||1}" style="width:80px">
+      <span class="small-note">day</span><input class="rec-dom" type="number" min="1" max="31" value="${rs.day_of_month||1}" style="width:80px">`;
+  }
+  return html;
+}
+
+function recChannels(rs){
+  const mask = rs.channel_mask || 0;
+  return (config.channels||[]).map((ch,i)=>
+    `<label><input type="checkbox" class="rec-ch" value="${i}" ${mask & (1<<i)?"checked":""}> ${i+1}. ${esc(ch.name)}</label>`
+  ).join("");
+}
+
+function renderRecurring(){
+  if(!config) return;
+  const info = PROFILE_INFO[(config.device&&config.device.profile)||"agri"] || PROFILE_INFO.agri;
+  $("#rec-hint").textContent = info.hint + " A recurring schedule is evaluated alongside the daily windows.";
+  const list = config.recurring || [];
+  const host = $("#recurring");
+  host.innerHTML = list.map((rs,i)=>`
+    <div class="rec-card" data-rec="${i}">
+      <div class="rec-head">
+        <span class="rnum">${i+1}</span>
+        <input class="rec-name wide" value="${esc(rs.name||"Schedule")}" maxlength="23">
+        <label class="row"><input type="checkbox" class="rec-enabled" ${rs.enabled!==false?"checked":""}> enabled</label>
+        <select class="rec-repeat">
+          ${Object.keys(REPEAT_LABEL).map(r=>`<option value="${r}" ${(rs.repeat||"daily")===r?"selected":""}>${REPEAT_LABEL[r]}</option>`).join("")}
+        </select>
+        <select class="rec-action">
+          <option value="on" ${rs.action==="on"?"selected":""}>turn ON</option>
+          <option value="off" ${rs.action==="off"?"selected":""}>turn OFF</option>
+          <option value="auto" ${rs.action==="auto"?"selected":""}>auto</option>
+        </select>
+        <button class="action small danger delrec" type="button">Remove</button>
+      </div>
+      <div class="rec-cond">
+        ${recCondition(rs)}
+        <span class="small-note">from</span><input class="rec-from" type="time" value="${esc(rs.from||"06:00")}">
+        <span class="small-note">to</span><input class="rec-to" type="time" value="${esc(rs.to||"07:00")}">
+      </div>
+      <div class="rec-chips">${recChannels(rs)}</div>
+    </div>`).join("") || `<div class="card"><p class="hint">No recurring schedules yet. Add one for a weekly valve run, a monthly maintenance window or a yearly event.</p></div>`;
+  recurringRendered = true;
+}
+
+function fillSettings(){
+  if(!config) return;
+  const d = config.device||{}, w = config.wifi||{}, p = config.pump||{}, s = config.safety||{}, co = config.coap||{};
+  $("#set-name").value = d.name||"";
+  $("#set-profile").value = d.profile||"agri";
+  $("#set-tz").value = d.timezone||"IST-5:30";
+  $("#set-host").value = w.hostname||"mraf";
+  $("#set-user").value = d.auth_user||"admin";
+  $("#set-device-id").value = d.device_id||"";
+  $("#set-ssid").value = w.ssid||"";
+  $("#set-minoff").value = p.min_off_sec ?? 300;
+  $("#set-maxrun").value = p.max_run_min ?? 120;
+  $("#set-recovery").value = p.recovery_delay_sec ?? 30;
+  $("#set-dry").value = p.dry_run_current_a ?? 1.5;
+  $("#set-grace").value = p.dry_run_grace_sec ?? 20;
+  $("#set-resume").checked = !!p.resume_after_outage;
+  $("#set-tanklow").checked = !!p.tank_full_active_low;
+  $("#set-sumplow").checked = !!p.sump_dry_active_low;
+  $("#set-maxboost").value = s.max_boost_min ?? 180;
+  $("#set-coap-enabled").checked = !!co.enabled;
+  $("#set-coap-host").value = co.host || "";
+  $("#set-coap-port").value = co.port ?? 5683;
+  $("#set-coap-path").value = co.path || "/mraf";
+  $("#set-coap-interval").value = co.interval_sec ?? 60;
+  $("#set-coap-token").value = "";
+  $("#set-remote-user").value = co.user || "farm";
+  $("#set-remote-pass").value = "";
+  $("#set-register").checked = co.register !== false;
+}
+
+function readDays(row){
+  let mask = 0;
+  $$(".day", row).forEach(cb => { if(cb.checked) mask |= DAY_BITS[Number(cb.value)]; });
+  return mask;
+}
+function readWindows(row){
+  return $$(".win", row).map(w => ({on: $(".on", w).value, off: $(".off", w).value})).filter(w => w.on && w.off);
+}
+function readRecurring(){
+  return $$("#recurring [data-rec]").map(row=>{
+    let days = 0;
+    $$(".rec-day", row).forEach(cb => { if(cb.checked) days |= DAY_BITS[Number(cb.value)]; });
+    let mask = 0;
+    $$(".rec-ch", row).forEach(cb => { if(cb.checked) mask |= (1 << Number(cb.value)); });
+    return {
+      name: $(".rec-name", row).value.trim() || "Schedule",
+      enabled: $(".rec-enabled", row).checked,
+      repeat: $(".rec-repeat", row).value,
+      days,
+      day_of_month: Number(($(".rec-dom", row)||{}).value || 1),
+      month: Number(($(".rec-month", row)||{}).value || 1),
+      from: $(".rec-from", row).value,
+      to: $(".rec-to", row).value,
+      channel_mask: mask,
+      action: $(".rec-action", row).value
+    };
+  });
+}
+
+function buildConfig(){
+  const cfg = JSON.parse(JSON.stringify(config || {}));
+  cfg.device = cfg.device || {};
+  cfg.wifi = cfg.wifi || {};
+  cfg.channels = $$("#schedules .sched-row").map((row,i)=>({
+    id: i+1,
+    name: $(".name", row).value.trim() || `Relay ${i+1}`,
+    zone: $(".zone", row).value.trim(),
+    equipment: $(".equipment", row).value,
+    pulse_mode: $(".pulse_mode", row).checked,
+    pulse_on_ms: Number($(".pulse_on_ms", row).value) || 600,
+    pulse_off_ms: Number($(".pulse_off_ms", row).value) || 600,
+    enabled: $(".enabled", row).checked,
+    days: readDays(row),
+    mode: $(".mode", row).value,
+    windows: readWindows(row)
+  }));
+  const prow = $("[data-pump-row]");
+  cfg.pump = cfg.pump || {};
+  cfg.pump.name = $(".name", prow).value.trim() || "5HP Pump";
+  cfg.pump.enabled = $("#pump-enabled").checked;
+  cfg.pump.days = readDays(prow);
+  cfg.pump.mode = $(".mode", prow).value;
+  cfg.pump.windows = readWindows(prow);
+  cfg.pump.min_off_sec = Number($("#set-minoff").value);
+  cfg.pump.max_run_min = Number($("#set-maxrun").value);
+  cfg.pump.recovery_delay_sec = Number($("#set-recovery").value);
+  cfg.pump.dry_run_current_a = Number($("#set-dry").value);
+  cfg.pump.dry_run_grace_sec = Number($("#set-grace").value);
+  cfg.pump.resume_after_outage = $("#set-resume").checked;
+  cfg.pump.tank_full_active_low = $("#set-tanklow").checked;
+  cfg.pump.sump_dry_active_low = $("#set-sumplow").checked;
+
+  cfg.recurring = readRecurring();
+
+  cfg.device.name = $("#set-name").value.trim() || "MRAF Controller";
+  cfg.device.profile = $("#set-profile").value;
+  cfg.device.timezone = $("#set-tz").value.trim() || "IST-5:30";
+  cfg.device.auth_user = $("#set-user").value.trim() || "admin";
+  cfg.device.device_id = $("#set-device-id").value.trim();
+  const ap = $("#set-pass").value;
+  if(ap) cfg.device.auth_pass = ap;
+  cfg.wifi.ssid = $("#set-ssid").value.trim();
+  cfg.wifi.hostname = $("#set-host").value.trim() || "mraf";
+  const wp = $("#set-wifipass").value;
+  if(wp) cfg.wifi.password = wp;
+
+  cfg.coap = cfg.coap || {};
+  cfg.coap.enabled = $("#set-coap-enabled").checked;
+  cfg.coap.host = $("#set-coap-host").value.trim();
+  cfg.coap.port = Number($("#set-coap-port").value) || 5683;
+  cfg.coap.path = $("#set-coap-path").value.trim() || "/mraf";
+  cfg.coap.interval_sec = Number($("#set-coap-interval").value) || 60;
+  cfg.coap.user = $("#set-remote-user").value.trim() || "farm";
+  cfg.coap.register = $("#set-register").checked;
+  const ct = $("#set-coap-token").value;
+  if(ct) cfg.coap.token = ct;
+  const rp = $("#set-remote-pass").value;
+  if(rp) cfg.coap.pass = rp;
+
+  cfg.safety = cfg.safety || {};
+  cfg.safety.max_boost_min = Number($("#set-maxboost").value) || 180;
+  return cfg;
+}
+
+async function saveConfig(){
+  try{
+    if(!config) await loadConfig();
+    if(!schedulesRendered) renderSchedules();
+    if(!recurringRendered) renderRecurring();
+    const out = await post("/api/config", buildConfig());
+    toast("Saved.");
+    schedulesRendered = false;
+    recurringRendered = false;
+    config = null;
+    await loadConfig();
+    if(out.reboot_required){
+      toast("Saved. Rebooting to apply Wi-Fi/security changes...", 6000);
+      setTimeout(()=>location.reload(), 7000);
+    }
+  }catch(e){ toast("Save failed: " + e.message, 5000); }
+}
+
+async function loadConfig(){
+  try{
+    config = await api("/api/config");
+    schedulesRendered = false;
+    recurringRendered = false;
+    if(!$("#tab-sched").hidden) renderSchedules();
+    if(!$("#tab-rec").hidden) renderRecurring();
+    fillSettings();
+    renderDash();
+  }catch(e){ toast("Config: " + e.message); }
+}
+
+async function loadStatus(){
+  try{
+    status = await api("/api/status");
+    if(!config) await loadConfig();
+    $("#sim-panel").hidden = !status.simulator;
+    if(status.simulator) syncSimControls();
+    renderDash();
+    if(!$("#tab-sched").hidden && !schedulesRendered) renderSchedules();
+    if(!$("#tab-rec").hidden && !recurringRendered) renderRecurring();
+  }catch(e){
+    $("#conn").textContent = "offline";
+    $("#conn").className = "pill bad";
+  }
+}
+
+function syncSimControls(){
+  if(!status || !status.sim) return;
+  const s = status.sim;
+  $("#sim-mains").checked = !!s.mains;
+  $("#sim-tank").checked = !!s.tank_full;
+  $("#sim-sump").checked = !!s.sump_dry;
+  $("#sim-current-auto").checked = s.current_override == null;
+  $("#sim-current").disabled = s.current_override != null ? false : true;
+  if(s.current_override != null) $("#sim-current").value = s.current_override;
+  $("#sim-current-val").textContent = ($("#sim-current").value) + " A";
+  if(s.speed) $("#sim-speed").value = String(s.speed);
+}
+
+async function postSim(path, body){
+  try{ await post(path, body); await loadStatus(); }
+  catch(e){ toast("Sim: " + e.message); }
+}
+
+document.addEventListener("click", async (ev)=>{
+  const tab = ev.target.closest("nav button");
+  if(tab){ setTab(tab.dataset.tab); return; }
+
+  const relayBtn = ev.target.closest("[data-relay]");
+  if(relayBtn){
+    const id = Number(relayBtn.dataset.relay);
+    const mode = relayBtn.dataset.mode;
+    const cmd = {target:"relay", id, mode};
+    if(relayBtn.dataset.pulse){
+      const box = $(`.pulse-ms[data-pulse-id="${id}"]`);
+      cmd.pulse_ms = box ? Number(box.value) : 600;
+    }
+    try{ status = await post("/api/control", cmd); renderDash(); }
+    catch(e){ toast(e.message); }
+    return;
+  }
+  const pumpBtn = ev.target.closest("[data-pump]");
+  if(pumpBtn){
+    const mode = pumpBtn.dataset.pump;
+    try{
+      if(mode === "reset") status = await post("/api/pump/reset", {});
+      else if(mode === "boost") status = await post("/api/control", {target:"pump", mode:"auto", boost_min:30});
+      else status = await post("/api/control", {target:"pump", mode});
+      renderDash();
+    }catch(e){ toast(e.message); }
+    return;
+  }
+  const allBtn = ev.target.closest("[data-all]");
+  if(allBtn){
+    try{ status = await post("/api/control", {target:"all", mode:allBtn.dataset.all}); renderDash(); }
+    catch(e){ toast(e.message); }
+    return;
+  }
+  if(ev.target.id === "refresh"){ loadStatus(); return; }
+  if(ev.target.id === "refresh-events"){
+    try{ const d = await api("/api/events"); renderEvents(d.events||[]); }catch(e){ toast(e.message); }
+    return;
+  }
+  if(ev.target.id === "save-config" || ev.target.id === "save-settings" || ev.target.id === "save-rec"){ saveConfig(); return; }
+  if(ev.target.id === "add-rec"){
+    if(!config) return;
+    config.recurring = config.recurring || [];
+    config.recurring.push({name:"New schedule",enabled:true,repeat:"weekly",days:1,day_of_month:1,month:1,
+      from:"06:00",to:"07:00",channel_mask:0,action:"on"});
+    recurringRendered = false;
+    renderRecurring();
+    return;
+  }
+  if(ev.target.closest(".delrec")){
+    const card = ev.target.closest("[data-rec]");
+    card.remove();
+    return;
+  }
+  if(ev.target.id === "addwin" || ev.target.closest(".addwin")){
+    const row = ev.target.closest(".sched-row");
+    if(row){
+      const host = $(".windows", row);
+      if($$(".win", host).length >= 4){ toast("Maximum 4 windows"); return; }
+      host.insertAdjacentHTML("beforeend", windowRow("06:00","07:00"));
+    }
+    return;
+  }
+  if(ev.target.closest(".delwin")){
+    ev.target.closest(".win").remove();
+    return;
+  }
+  if(ev.target.id === "scan-wifi"){
+    try{
+      const d = await api("/api/wifi/scan");
+      const list = $("#ssid-list");
+      list.innerHTML = (d.networks||[]).map(n=>`<option value="${esc(n.ssid)}">${esc(n.ssid)} ${n.secure?"(locked)":"(open)"}</option>`).join("");
+      toast(`Found ${(d.networks||[]).length} networks`);
+    }catch(e){ toast(e.message); }
+    return;
+  }
+  if(ev.target.id === "apply-time"){
+    const v = $("#set-time").value;
+    if(!v){ toast("Pick a date/time"); return; }
+    const epoch = Math.floor(new Date(v).getTime()/1000);
+    try{ status = await post("/api/time", {epoch}); renderDash(); toast("Time set"); }
+    catch(e){ toast(e.message); }
+    return;
+  }
+  if(ev.target.id === "reboot"){
+    if(!confirm("Reboot the controller?")) return;
+    try{ await post("/api/reboot", {}); toast("Rebooting..."); setTimeout(()=>location.reload(), 6000); }
+    catch(e){ toast(e.message); }
+    return;
+  }
+  const step = ev.target.closest("[data-step]");
+  if(step){ postSim("/api/sim/step", {seconds:Number(step.dataset.step)}); return; }
+});
+
+document.addEventListener("change", async (ev)=>{
+  if(ev.target.classList && ev.target.classList.contains("rec-repeat")){
+    const card = ev.target.closest("[data-rec]");
+    const idx = Number(card.dataset.rec);
+    if(config && config.recurring && config.recurring[idx]){
+      config.recurring[idx].repeat = ev.target.value;
+      recurringRendered = false;
+      renderRecurring();
+    }
+    return;
+  }
+  if(ev.target.id === "set-profile"){
+    const p = ev.target.value;
+    $("#rec-hint").textContent = (PROFILE_INFO[p]||PROFILE_INFO.agri).hint;
+    if(config && config.device) config.device.profile = p;
+    schedulesRendered = false;
+    if(!$("#tab-sched").hidden) renderSchedules();
+    return;
+  }
+  if(ev.target.id === "sim-mains") postSim("/api/sim/power", {present: ev.target.checked});
+  if(ev.target.id === "sim-tank" || ev.target.id === "sim-sump"){
+    postSim("/api/sim/sensors", {tank_full: $("#sim-tank").checked, sump_dry: $("#sim-sump").checked});
+  }
+  if(ev.target.id === "sim-current-auto"){
+    if(ev.target.checked) postSim("/api/sim/current", {auto:true});
+    else postSim("/api/sim/current", {amps:Number($("#sim-current").value)});
+  }
+  if(ev.target.id === "sim-speed") postSim("/api/sim/speed", {speed:Number(ev.target.value)});
+});
+
+$("#sim-current").addEventListener("input", (ev)=>{ $("#sim-current-val").textContent = ev.target.value + " A"; });
+document.addEventListener("input", (ev)=>{
+  if(ev.target.id === "sim-current" && !$("#sim-current-auto").checked){
+    clearTimeout(window._curT);
+    window._curT = setTimeout(()=>postSim("/api/sim/current", {amps:Number(ev.target.value)}), 250);
+  }
+});
+
+setTab("dash");
+loadConfig().then(loadStatus);
+setInterval(loadStatus, 2000);
+setInterval(()=>{ if(!$("#tab-events").hidden) loadStatus(); }, 5000);
+</script>
+</body>
+</html>

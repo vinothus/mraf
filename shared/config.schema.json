@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/mraf/config.schema.json",
+  "title": "MRAF Farm Controller configuration",
+  "description": "Configuration accepted by POST /api/config on the ESP32 firmware and the native simulator.",
+  "type": "object",
+  "required": ["device", "wifi", "channels", "pump", "safety"],
+  "additionalProperties": true,
+  "properties": {
+    "device": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": {"type": "string", "maxLength": 39},
+        "timezone": {"type": "string", "maxLength": 15, "default": "IST-5:30"},
+        "auth_user": {"type": "string", "maxLength": 19, "default": "admin"},
+        "auth_pass": {"type": "string", "maxLength": 31, "description": "Write-only; omitted from GET responses."}
+      }
+    },
+    "wifi": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "ssid": {"type": "string", "maxLength": 32},
+        "password": {"type": "string", "maxLength": 64, "description": "Write-only; omitted from GET responses."},
+        "hostname": {"type": "string", "maxLength": 32, "default": "mraf"}
+      }
+    },
+    "coap": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Remote Java server polling over CoAP/UDP.",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "host": {"type": "string", "maxLength": 63, "description": "Hostname or IPv4 address of the CoAP server."},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535, "default": 5683},
+        "path": {"type": "string", "maxLength": 31, "pattern": "^/", "default": "/mraf"},
+        "interval_sec": {"type": "integer", "minimum": 10, "maximum": 3600, "default": 30},
+        "token": {"type": "string", "maxLength": 47, "description": "Write-only shared token; omitted from GET responses."}
+      }
+    },
+    "channels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "description": "Missing channels are padded with disabled spares.",
+      "items": {
+        "type": "object",
+        "required": ["name", "enabled", "days", "mode", "windows"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {"type": "integer", "minimum": 1, "maximum": 12},
+          "name": {"type": "string", "maxLength": 23},
+          "enabled": {"type": "boolean"},
+          "days": {"type": "integer", "minimum": 0, "maximum": 127, "description": "bit0=Mon ... bit6=Sun"},
+          "mode": {"enum": ["auto", "on", "off"]},
+          "windows": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {"$ref": "#/$defs/window"}
+          }
+        }
+      }
+    },
+    "pump": {
+      "type": "object",
+      "required": ["name", "enabled", "days", "mode", "windows"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {"type": "string", "maxLength": 23},
+        "enabled": {"type": "boolean"},
+        "days": {"type": "integer", "minimum": 0, "maximum": 127},
+        "mode": {"enum": ["auto", "on", "off"]},
+        "windows": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {"$ref": "#/$defs/window"}
+        },
+        "min_off_sec": {"type": "integer", "minimum": 30, "maximum": 3600, "default": 300},
+        "max_run_min": {"type": "integer", "minimum": 1, "maximum": 720, "default": 120},
+        "recovery_delay_sec": {"type": "integer", "minimum": 0, "maximum": 600, "default": 30},
+        "resume_after_outage": {"type": "boolean", "default": true},
+        "dry_run_current_a": {"type": "number", "minimum": 0.5, "maximum": 20, "default": 1.5},
+        "dry_run_grace_sec": {"type": "integer", "minimum": 5, "maximum": 120, "default": 20},
+        "tank_full_active_low": {"type": "boolean", "default": true},
+        "sump_dry_active_low": {"type": "boolean", "default": true}
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "max_boost_min": {"type": "integer", "minimum": 1, "maximum": 1440, "default": 180}
+      }
+    }
+  },
+  "$defs": {
+    "window": {
+      "type": "object",
+      "required": ["on", "off"],
+      "additionalProperties": false,
+      "properties": {
+        "on": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"},
+        "off": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"}
+      }
+    }
+  }
+}

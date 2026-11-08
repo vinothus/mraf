@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MRAF Remote Server</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="mark">M</div>
+    <div><h1>MRAF Remote</h1><p>Multi-device ESP32 fleet · CoAP link · Spring Boot + H2</p></div>
+  </div>
+  <div class="top-actions">
+    <span id="role-pill" class="pill">...</span>
+    <span id="user-name" class="who"></span>
+    <span id="link-pill" class="pill offline">Waiting</span>
+    <button id="refresh" class="btn ghost" type="button">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <section id="admin-view" hidden>
+    <div class="stats">
+      <div class="card stat"><div class="k">Devices</div><div class="v" id="adm-total">--</div><div class="s">registered controllers</div></div>
+      <div class="card stat"><div class="k">Confirmed</div><div class="v" id="adm-confirmed">--</div><div class="s">approved by admin</div></div>
+      <div class="card stat"><div class="k">Online</div><div class="v" id="adm-online">--</div><div class="s">polled in last 90 s</div></div>
+      <div class="card stat"><div class="k">Pending</div><div class="v" id="adm-pending">--</div><div class="s">waiting for confirmation</div></div>
+    </div>
+
+    <div class="toolbar">
+      <div><h2>Fleet</h2><p class="hint">New ESP32s register themselves. Confirm one to unlock its dashboard and device login.</p></div>
+      <button id="adm-refresh" class="btn ghost" type="button">Reload</button>
+    </div>
+    <div id="device-grid" class="device-grid"></div>
+    <p id="fleet-empty" class="hint" hidden>No controllers have polled yet. Power on an ESP32 pointed at this server.</p>
+  </section>
+
+  <section id="device-view" hidden>
+    <div class="device-head">
+      <button id="back-btn" class="btn ghost" type="button" hidden>← Fleet</button>
+      <div class="device-title">
+        <span class="eyebrow" id="dev-id">--</span>
+        <h2 id="dev-name">Controller</h2>
+      </div>
+      <div class="device-flags">
+        <span id="dev-link" class="pill offline">Waiting</span>
+        <span id="dev-confirmed" class="pill">pending</span>
+        <span id="dev-profile" class="pill">agri</span>
+      </div>
+      <div class="device-actions">
+        <button id="dev-confirm" class="btn primary" type="button" hidden>Confirm device</button>
+        <button id="dev-reject" class="btn danger" type="button" hidden>Reject</button>
+        <button id="dev-delete" class="btn danger" type="button" hidden>Delete</button>
+      </div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="dash" type="button">Dashboard</button>
+      <button class="tab" data-tab="sched" type="button">Schedules</button>
+      <button class="tab" data-tab="rec" type="button">Recurring</button>
+      <button class="tab" data-tab="activity" type="button">Activity</button>
+    </nav>
+
+    <section id="tab-dash" class="tab-page">
+      <div class="stats">
+        <div class="card stat"><div class="k">Battery</div><div class="v" id="stat-battery">--</div><div class="s">LiFePO4 controller rail</div></div>
+        <div class="card stat"><div class="k">Mains</div><div class="v" id="stat-power">--</div><div class="s" id="stat-power-sub">controller-only backup</div></div>
+        <div class="card stat"><div class="k">Active outputs</div><div class="v" id="stat-active">--</div><div class="s">of 12 relays</div></div>
+        <div class="card stat"><div class="k">CoAP queue</div><div class="v" id="stat-queue">--</div><div class="s" id="stat-queue-sub">no pending request</div></div>
+      </div>
+
+      <div class="split">
+        <article class="card pump-card">
+          <div class="card-head"><div><span class="eyebrow">Contactor</span><h2 id="pump-name">Pump</h2></div><span id="pump-state" class="badge">--</span></div>
+          <div class="pump-grid">
+            <div><label>Mode</label><div class="big" id="pump-mode">--</div></div>
+            <div><label>Current</label><div class="big" id="pump-current">--</div></div>
+            <div><label>State</label><div class="big" id="pump-sched">--</div></div>
+            <div><label>Fault</label><div class="big" id="pump-fault">--</div></div>
+          </div>
+          <div class="floats">
+            <span id="float-tank" class="pill">Tank: --</span>
+            <span id="float-sump" class="pill">Sump: --</span>
+          </div>
+          <div class="btnrow">
+            <button class="btn" data-pump="auto" type="button">Auto</button>
+            <button class="btn" data-pump="on" type="button">On</button>
+            <button class="btn" data-pump="off" type="button">Off</button>
+            <button class="btn accent" data-pump="boost" type="button">Boost 30 min</button>
+          </div>
+        </article>
+
+        <article class="card link-card">
+          <div class="card-head"><div><span class="eyebrow">Remote link</span><h2>CoAP polling</h2></div><span class="pill">UDP 5683</span></div>
+          <dl class="kv">
+            <dt>Last poll</dt><dd id="link-last">--</dd>
+            <dt>Last ACK</dt><dd id="link-ack">--</dd>
+            <dt>In flight</dt><dd id="link-flight">--</dd>
+            <dt>Polls</dt><dd id="link-polls">--</dd>
+            <dt>Poll interval</dt><dd id="link-interval">--</dd>
+          </dl>
+          <div class="btnrow">
+            <button id="request-data" class="btn accent" type="button">Request data now</button>
+            <button id="all-auto" class="btn" type="button">All auto</button>
+            <button id="all-off" class="btn danger" type="button">All off</button>
+          </div>
+          <p class="hint">Commands are queued and delivered on the controller's next poll; the result is acked on the following poll.</p>
+        </article>
+      </div>
+
+      <div class="toolbar"><h2>Equipment</h2><span class="hint">relay → ESP32 GPIO, animated by live state</span></div>
+      <div id="relays" class="relay-grid"></div>
+    </section>
+
+    <section id="tab-sched" class="tab-page" hidden>
+      <div class="toolbar">
+        <div><h2>Profiles &amp; schedules</h2><p class="hint">Assign equipment and zones, then push the whole config over CoAP.</p></div>
+        <button id="save-config" class="btn primary" type="button">Save &amp; send</button>
+      </div>
+      <div class="card profile-row">
+        <label>Device profile</label>
+        <select id="profile-select">
+          <option value="agri">Agri</option>
+          <option value="home">Home</option>
+          <option value="godown">Godown</option>
+          <option value="industry">Industry</option>
+        </select>
+        <label>Poll interval (sec)</label>
+        <input id="interval-input" type="number" min="10" max="3600" step="10">
+        <span class="hint">Server-varied schedule; the ESP32 adopts this on its next poll.</span>
+      </div>
+      <div id="schedules" class="sched-list"></div>
+      <div class="toolbar"><h2>Pump schedule &amp; protection</h2></div>
+      <div id="pump-schedule" class="card sched-row"></div>
+    </section>
+
+    <section id="tab-rec" class="tab-page" hidden>
+      <div class="toolbar">
+        <div><h2>Recurring schedules</h2><p class="hint">Daily, weekly, monthly or yearly windows. Off rules win over on rules.</p></div>
+        <button id="add-rec" class="btn accent" type="button">+ Add schedule</button>
+      </div>
+      <div id="recurring" class="rec-list"></div>
+      <div class="toolbar"><button id="save-config-rec" class="btn primary" type="button">Save &amp; send</button></div>
+    </section>
+
+    <section id="tab-activity" class="tab-page" hidden>
+      <div class="toolbar"><div><h2>Activity</h2><p class="hint">CoAP polls, queued requests and acknowledgements.</p></div><button id="clear-queue" class="btn danger" type="button">Clear queue</button></div>
+      <div class="split">
+        <article class="card"><h3>Acknowledgements</h3><div id="acks" class="log"></div></article>
+        <article class="card"><h3>Server events</h3><div id="events" class="log"></div></article>
+      </div>
+    </section>
+  </section>
+
+  <section id="login-view" hidden>
+    <div class="card login-card">
+      <h2>Server authentication required</h2>
+      <p class="hint">Use the admin account, or a confirmed device's server login.</p>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

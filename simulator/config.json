@@ -1,0 +1,71 @@
+{
+  "device": {
+    "name": "MRAF Farm Controller",
+    "timezone": "IST-5:30",
+    "auth_user": "admin",
+    "auth_pass": "farm1234",
+    "device_id": "SIM-000001",
+    "profile": "agri"
+  },
+  "wifi": {
+    "ssid": "",
+    "password": "",
+    "hostname": "mraf"
+  },
+  "coap": {
+    "enabled": false,
+    "host": "",
+    "port": 5683,
+    "path": "/mraf",
+    "interval_sec": 60,
+    "token": "",
+    "user": "farm",
+    "pass": "farm1234",
+    "register": true
+  },
+  "channels": [
+    {"id": 1, "name": "Shed Light", "zone": "Zone A", "equipment": "light", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "18:00", "off": "22:00"}]},
+    {"id": 2, "name": "Yard Light", "zone": "Zone A", "equipment": "light", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "18:30", "off": "05:30"}]},
+    {"id": 3, "name": "Drip Zone A", "zone": "Zone B", "equipment": "valve", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 21, "mode": "auto", "windows": [{"on": "06:00", "off": "06:30"}]},
+    {"id": 4, "name": "Drip Zone B", "zone": "Zone C", "equipment": "valve", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 21, "mode": "auto", "windows": [{"on": "06:30", "off": "07:00"}]},
+    {"id": 5, "name": "Aerator 1", "zone": "Pond", "equipment": "motor", "pulse_mode": true, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "22:00", "off": "04:00"}]},
+    {"id": 6, "name": "Aerator 2", "zone": "Pond", "equipment": "motor", "pulse_mode": true, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "22:00", "off": "04:00"}]},
+    {"id": 7, "name": "Cattle Fan", "zone": "Shed", "equipment": "fan", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "10:00", "off": "16:00"}]},
+    {"id": 8, "name": "Milking Light", "zone": "Shed", "equipment": "light", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "04:30", "off": "06:00"}]},
+    {"id": 9, "name": "Gate Light", "zone": "Gate", "equipment": "light", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "19:00", "off": "06:00"}]},
+    {"id": 10, "name": "Spare 1", "zone": "Zone 10", "equipment": "other", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": false, "days": 0, "mode": "auto", "windows": []},
+    {"id": 11, "name": "Spare 2", "zone": "Zone 11", "equipment": "other", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": false, "days": 0, "mode": "auto", "windows": []},
+    {"id": 12, "name": "Spare 3", "zone": "Zone 12", "equipment": "other", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": false, "days": 0, "mode": "auto", "windows": []}
+  ],
+  "recurring": [
+    {"name": "Weekly soak", "enabled": true, "repeat": "weekly", "days": 1, "day_of_month": 1, "month": 1, "from": "05:00", "to": "05:15", "channel_mask": 12, "action": "on"},
+    {"name": "Monthly valve check", "enabled": true, "repeat": "monthly", "days": 127, "day_of_month": 1, "month": 1, "from": "09:00", "to": "09:10", "channel_mask": 24, "action": "on"}
+  ],
+  "pump": {
+    "name": "5HP Borewell Pump",
+    "enabled": true,
+    "days": 127,
+    "mode": "auto",
+    "windows": [{"on": "06:00", "off": "07:00"}, {"on": "17:00", "off": "18:00"}],
+    "min_off_sec": 300,
+    "max_run_min": 120,
+    "recovery_delay_sec": 30,
+    "resume_after_outage": true,
+    "dry_run_current_a": 1.5,
+    "dry_run_grace_sec": 20,
+    "tank_full_active_low": true,
+    "sump_dry_active_low": true
+  },
+  "safety": {
+    "max_boost_min": 180
+  },
+  "sim": {
+    "mains": true,
+    "tank_full": false,
+    "sump_dry": false,
+    "battery_v": 13.2,
+    "current_override": null,
+    "speed": 60,
+    "pump_running_current_a": 6.8
+  }
+}

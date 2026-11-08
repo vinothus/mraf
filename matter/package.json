@@ -1,0 +1,21 @@
+{
+  "name": "mraf-matter-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Matter bridge for the MRAF Spring Boot server",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "start": "node src/mraf-matter-bridge.mjs",
+    "check": "node --check src/mapping.mjs && node --check src/mraf-matter-bridge.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@matter/main": "0.18.0",
+    "@matter/nodejs": "0.18.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

@@ -1,0 +1,44 @@
+server:
+  port: ${MRAF_HTTP_PORT:8080}
+  address: 0.0.0.0
+  compression:
+    enabled: true
+
+spring:
+  application:
+    name: mraf-remote-server
+  jackson:
+    default-property-inclusion: non_null
+  datasource:
+    url: ${MRAF_DB_URL:jdbc:h2:file:./data/mraf;AUTO_SERVER=TRUE}
+    username: ${MRAF_DB_USER:sa}
+    password: ${MRAF_DB_PASSWORD:}
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  h2:
+    console:
+      enabled: ${MRAF_H2_CONSOLE:false}
+      path: /h2-console
+
+mraf:
+  token: ${MRAF_TOKEN:demo-token}
+  server-timezone: ${MRAF_TIMEZONE:Asia/Kolkata}
+  coap:
+    port: ${MRAF_COAP_PORT:5683}
+    path: ${MRAF_COAP_PATH:/mraf}
+  dashboard:
+    user: ${MRAF_DASHBOARD_USER:admin}
+    password: ${MRAF_DASHBOARD_PASSWORD:mraf-demo}
+
+logging:
+  level:
+    root: INFO
+    org.eclipse.californium: WARN
+    com.mraf: INFO

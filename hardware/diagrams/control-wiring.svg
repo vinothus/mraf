@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="940" viewBox="0 0 1300 940">
+<rect width="1300" height="940" fill="#ffffff"/>
+<style>
+text { font-family: DejaVu Sans, Segoe UI, Arial, sans-serif; fill: #14202b; }
+.t { font-size: 26px; font-weight: 700; }
+.s { font-size: 14px; fill: #5b6b7a; }
+.b { font-size: 15px; font-weight: 700; }
+.n { font-size: 12.5px; }
+.small { font-size: 11.5px; fill: #5b6b7a; }
+.pin { font-size: 12px; font-family: DejaVu Sans Mono, Consolas, monospace; }
+.title { font-size: 26px; font-weight: 700; }
+</style>
+<text x="40" y="46" class="title">MRAF control panel wiring</text>
+<text x="40" y="70" class="s">Pin map, relay module modification, sensors and power rails. Terminal numbers are suggestions.</text>
+<rect x="40" y="100" width="360" height="700" rx="10" fill="#e3f0ff" stroke="#4a7fb5" stroke-width="2"/>
+<text x="52" y="124" class="b">ESP32 DevKit V1 (38-pin)</text>
+<text x="55" y="150" class="pin" text-anchor="start" font-weight="700">GPIO13</text>
+<line x1="130" y1="146" x2="200" y2="146" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="150" class="n" text-anchor="start">Relay IN1  Shed Light</text>
+<text x="55" y="186" class="pin" text-anchor="start" font-weight="700">GPIO14</text>
+<line x1="130" y1="182" x2="200" y2="182" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="186" class="n" text-anchor="start">Relay IN2  Yard Light</text>
+<text x="55" y="222" class="pin" text-anchor="start" font-weight="700">GPIO16</text>
+<line x1="130" y1="218" x2="200" y2="218" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="222" class="n" text-anchor="start">Relay IN3  Drip A</text>
+<text x="55" y="258" class="pin" text-anchor="start" font-weight="700">GPIO17</text>
+<line x1="130" y1="254" x2="200" y2="254" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="258" class="n" text-anchor="start">Relay IN4  Drip B</text>
+<text x="55" y="294" class="pin" text-anchor="start" font-weight="700">GPIO18</text>
+<line x1="130" y1="290" x2="200" y2="290" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="294" class="n" text-anchor="start">Relay IN5  Aerator 1</text>
+<text x="55" y="330" class="pin" text-anchor="start" font-weight="700">GPIO19</text>
+<line x1="130" y1="326" x2="200" y2="326" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="330" class="n" text-anchor="start">Relay IN6  Aerator 2</text>
+<text x="55" y="366" class="pin" text-anchor="start" font-weight="700">GPIO21</text>
+<line x1="130" y1="362" x2="200" y2="362" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="366" class="n" text-anchor="start">Relay IN7  Cattle Fan</text>
+<text x="55" y="402" class="pin" text-anchor="start" font-weight="700">GPIO22</text>
+<line x1="130" y1="398" x2="200" y2="398" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="402" class="n" text-anchor="start">Relay IN8  Milking Light</text>
+<text x="55" y="438" class="pin" text-anchor="start" font-weight="700">GPIO23</text>
+<line x1="130" y1="434" x2="200" y2="434" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="438" class="n" text-anchor="start">Relay IN9  Gate Light</text>
+<text x="55" y="474" class="pin" text-anchor="start" font-weight="700">GPIO25</text>
+<line x1="130" y1="470" x2="200" y2="470" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="474" class="n" text-anchor="start">Relay IN10 Spare 1</text>
+<text x="55" y="510" class="pin" text-anchor="start" font-weight="700">GPIO26</text>
+<line x1="130" y1="506" x2="200" y2="506" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="510" class="n" text-anchor="start">Relay IN11 Spare 2</text>
+<text x="55" y="546" class="pin" text-anchor="start" font-weight="700">GPIO27</text>
+<line x1="130" y1="542" x2="200" y2="542" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="546" class="n" text-anchor="start">Relay IN12 Spare 3</text>
+<text x="55" y="582" class="pin" text-anchor="start" font-weight="700">GPIO33</text>
+<line x1="130" y1="578" x2="200" y2="578" stroke="#4a7fb5" stroke-width="1"/>
+<text x="208" y="582" class="n" text-anchor="start">Relay IN13 Pump</text>
+<text x="385" y="150" class="pin" text-anchor="end" font-weight="700">GPIO32</text>
+<line x1="285" y1="146" x2="355" y2="146" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="150" class="n" text-anchor="end">Mains sense (22k/15k)</text>
+<text x="385" y="186" class="pin" text-anchor="end" font-weight="700">GPIO34</text>
+<line x1="285" y1="182" x2="355" y2="182" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="186" class="n" text-anchor="end">Tank full float</text>
+<text x="385" y="222" class="pin" text-anchor="end" font-weight="700">GPIO35</text>
+<line x1="285" y1="218" x2="355" y2="218" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="222" class="n" text-anchor="end">Sump dry float</text>
+<text x="385" y="258" class="pin" text-anchor="end" font-weight="700">GPIO36</text>
+<line x1="285" y1="254" x2="355" y2="254" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="258" class="n" text-anchor="end">Battery 100k/22k</text>
+<text x="385" y="294" class="pin" text-anchor="end" font-weight="700">GPIO39</text>
+<line x1="285" y1="290" x2="355" y2="290" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="294" class="n" text-anchor="end">ACS712 + 2:1 divider</text>
+<text x="385" y="330" class="pin" text-anchor="end" font-weight="700">GPIO4</text>
+<line x1="285" y1="326" x2="355" y2="326" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="330" class="n" text-anchor="end">DS3231 SDA</text>
+<text x="385" y="366" class="pin" text-anchor="end" font-weight="700">GPIO5</text>
+<line x1="285" y1="362" x2="355" y2="362" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="366" class="n" text-anchor="end">DS3231 SCL</text>
+<text x="385" y="402" class="pin" text-anchor="end" font-weight="700">GPIO2</text>
+<line x1="285" y1="398" x2="355" y2="398" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="402" class="n" text-anchor="end">Status LED</text>
+<text x="385" y="438" class="pin" text-anchor="end" font-weight="700">3V3</text>
+<line x1="285" y1="434" x2="355" y2="434" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="438" class="n" text-anchor="end">Relay VCC + pull-ups</text>
+<text x="385" y="474" class="pin" text-anchor="end" font-weight="700">GND</text>
+<line x1="285" y1="470" x2="355" y2="470" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="474" class="n" text-anchor="end">Common logic GND</text>
+<text x="385" y="510" class="pin" text-anchor="end" font-weight="700">5V</text>
+<line x1="285" y1="506" x2="355" y2="506" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="510" class="n" text-anchor="end">Not used for relay coils</text>
+<text x="385" y="546" class="pin" text-anchor="end" font-weight="700">EN</text>
+<line x1="285" y1="542" x2="355" y2="542" stroke="#4a7fb5" stroke-width="1"/>
+<text x="292" y="546" class="n" text-anchor="end">Reset button</text>
+<rect x="470" y="100" width="420" height="300" rx="10" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="482" y="124" class="b">16-channel 5 V relay module</text>
+<text x="482" y="145" class="n">Remove JD-VCC jumper.</text>
+<text x="482" y="163" class="n">VCC  -> ESP32 3V3 (logic only)</text>
+<text x="482" y="181" class="n">GND  -> ESP32 GND</text>
+<text x="482" y="199" class="n">JD-VCC -> 5 V SMPS +</text>
+<text x="482" y="217" class="n">Coil GND -> 5 V SMPS -</text>
+<text x="482" y="235" class="n">IN1..IN13 -> GPIO list at left</text>
+<text x="482" y="253" class="n">Contacts: COM/NO/NC per channel</text>
+<text x="482" y="271" class="n">Active-LOW inputs: LOW = relay ON</text>
+<text x="482" y="289" class="n">Use NO contacts for loads; keep all</text>
+<text x="482" y="307" class="n">live terminals covered / in enclosure.</text>
+<rect x="470" y="420" width="420" height="74" rx="8" fill="#fff4d6" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="482" y="442" class="n" text-anchor="start">Why split the rails? The ESP32 stays alive on the battery,</text>
+<text x="482" y="460" class="n" text-anchor="start">but every relay coil is on the mains-derived 5 V SMPS. During</text>
+<text x="482" y="478" class="n" text-anchor="start">a power cut all relays drop out even if the ESP32 is still on.</text>
+<rect x="940" y="100" width="320" height="220" rx="10" fill="#e3f0ff" stroke="#4a7fb5" stroke-width="2"/>
+<text x="952" y="124" class="b">DS3231 RTC</text>
+<text x="952" y="145" class="n">VCC -> 3V3</text>
+<text x="952" y="163" class="n">GND -> GND</text>
+<text x="952" y="181" class="n">SDA -> GPIO4</text>
+<text x="952" y="199" class="n">SCL -> GPIO5</text>
+<text x="952" y="217" class="n">Battery: CR2032</text>
+<text x="952" y="235" class="n">I2C address 0x68</text>
+<rect x="940" y="350" width="320" height="220" rx="10" fill="#fff4d6" stroke="#c99a2e" stroke-width="2"/>
+<text x="952" y="374" class="b">ACS712-30 A</text>
+<text x="952" y="395" class="n">VCC -> 5 V (battery rail)</text>
+<text x="952" y="413" class="n">GND -> GND</text>
+<text x="952" y="431" class="n">OUT -> 10k/10k divider -> GPIO39</text>
+<text x="952" y="449" class="n">66 mV/A, /2 => 33 mV/A</text>
+<text x="952" y="467" class="n">Zero calibrated at boot (pump OFF)</text>
+<text x="952" y="485" class="n">Series in pump line L1 only</text>
+<rect x="940" y="600" width="320" height="200" rx="10" fill="#f1f4f7" stroke="#7d8b99" stroke-width="2"/>
+<text x="952" y="624" class="b">Float switches (sense)</text>
+<text x="952" y="645" class="n">Tank full: COM -> GPIO34, NO -> GND</text>
+<text x="952" y="663" class="n">Sump dry: COM -> GPIO35, NO -> GND</text>
+<text x="952" y="681" class="n">10k pull-up to 3V3 on each GPIO</text>
+<text x="952" y="699" class="n">Use SEPARATE NC floats at mains</text>
+<text x="952" y="717" class="n">voltage in the contactor safety chain.</text>
+<text x="952" y="735" class="n">Never share a float common between</text>
+<text x="952" y="753" class="n">230 V and 3.3 V circuits.</text>
+<rect x="40" y="830" width="540" height="90" rx="10" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="52" y="854" class="b">Battery-backed controller rail</text>
+<text x="52" y="875" class="n">LiFePO4 charger -> 12.8 V pack; pack -> fuse -> LVD -> 5 V buck -> ESP32 (or USB).</text>
+<text x="52" y="893" class="n">Common GND with relay logic side only. Do not parallel the two 5 V sources.</text>
+<rect x="620" y="830" width="640" height="90" rx="10" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="632" y="854" class="b">Mains-derived relay rail</text>
+<text x="632" y="875" class="n">230 V AC -> 5 V 3 A SMPS -> JD-VCC and all relay coil returns.</text>
+<text x="632" y="893" class="n">Add 1 A fuse on the SMPS input and a MOV across its output.</text>
+</svg>

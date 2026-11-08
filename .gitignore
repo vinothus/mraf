@@ -1,0 +1,25 @@
+firmware/mraf/webui.h
+hardware/wokwi/build/
+simulator/__pycache__/
+tests/__pycache__/
+*.pyc
+build/
+
+server/target/
+server/data/
+matter/node_modules/
+matter/data/
+
+# crash / editor / OS noise
+hs_err_pid*.log
+replay_pid*.log
+*.swp
+.DS_Store
+
+# Zephyr build output and local simulator state
+firmware/zephyr/build/
+firmware/zephyr/.cache/
+firmware/zephyr/zephyr/
+mraf-settings.json
+__pycache__/
+*.pyc

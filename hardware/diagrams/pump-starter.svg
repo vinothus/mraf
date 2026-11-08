@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="940" viewBox="0 0 1300 940">
+<rect width="1300" height="940" fill="#ffffff"/>
+<style>
+text { font-family: DejaVu Sans, Segoe UI, Arial, sans-serif; fill: #14202b; }
+.t { font-size: 26px; font-weight: 700; }
+.s { font-size: 14px; fill: #5b6b7a; }
+.b { font-size: 15px; font-weight: 700; }
+.n { font-size: 12.5px; }
+.small { font-size: 11.5px; fill: #5b6b7a; }
+.pin { font-size: 12px; font-family: DejaVu Sans Mono, Consolas, monospace; }
+.title { font-size: 26px; font-weight: 700; }
+</style>
+<text x="40" y="46" class="title">5 HP 3-phase DOL starter and safety chain</text>
+<text x="40" y="70" class="s">Concept diagram. Verify with a licensed electrician and local rules before energising.</text>
+<text x="40" y="110" class="t" text-anchor="start" font-weight="700">POWER CIRCUIT</text>
+<text x="80" y="140" class="pin" text-anchor="middle" font-weight="700">L1</text>
+<line x1="80" y1="150" x2="80" y2="780" stroke="#c05656" stroke-width="3"/>
+<text x="120" y="140" class="pin" text-anchor="middle" font-weight="700">L2</text>
+<line x1="120" y1="150" x2="120" y2="780" stroke="#c05656" stroke-width="3"/>
+<text x="160" y="140" class="pin" text-anchor="middle" font-weight="700">L3</text>
+<line x1="160" y1="150" x2="160" y2="780" stroke="#c05656" stroke-width="3"/>
+<line x1="200" y1="780" x2="200" y2="150" stroke="#33475b" stroke-width="3"/>
+<text x="200" y="140" class="pin" text-anchor="middle" font-weight="700">N</text>
+<line x1="240" y1="780" x2="240" y2="150" stroke="#4f9b67" stroke-width="3"/>
+<text x="240" y="140" class="pin" text-anchor="middle" font-weight="700">PE</text>
+<rect x="55" y="170" width="210" height="80" rx="8" fill="#fff4d6" stroke="#c99a2e" stroke-width="2"/>
+<text x="160" y="192" class="b" text-anchor="middle">3-POLE ISOLATOR</text>
+<text x="160" y="212" class="small" text-anchor="middle">32 A, lockable</text>
+<rect x="55" y="290" width="210" height="80" rx="8" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="160" y="312" class="b" text-anchor="middle">RCCB</text>
+<text x="160" y="332" class="small" text-anchor="middle">4-pole, 40 A, 30 mA</text>
+<rect x="55" y="410" width="210" height="80" rx="8" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="160" y="432" class="b" text-anchor="middle">3-POLE MCB</text>
+<text x="160" y="452" class="small" text-anchor="middle">16 A, C or D curve</text>
+<rect x="55" y="530" width="210" height="100" rx="8" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="160" y="552" class="b" text-anchor="middle">CONTACTOR</text>
+<text x="160" y="572" class="small" text-anchor="middle">9 A AC-3, 415 V coil</text>
+<rect x="55" y="670" width="210" height="100" rx="8" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="160" y="692" class="b" text-anchor="middle">OVERLOAD</text>
+<text x="160" y="712" class="small" text-anchor="middle">5.5-8 A, set ~7 A</text>
+<rect x="55" y="810" width="210" height="70" rx="8" fill="#e3f0ff" stroke="#4a7fb5" stroke-width="2"/>
+<text x="160" y="832" class="b" text-anchor="middle">PUMP</text>
+<text x="160" y="852" class="small" text-anchor="middle">5 HP, 3-phase, 415 V</text>
+<line x1="160" y1="250" x2="160" y2="288" stroke="#33475b" stroke-width="2"/>
+<polygon points="160,288 155.8,278.9 164.2,278.9" fill="#33475b"/>
+<line x1="160" y1="370" x2="160" y2="408" stroke="#33475b" stroke-width="2"/>
+<polygon points="160,408 155.8,398.9 164.2,398.9" fill="#33475b"/>
+<line x1="160" y1="490" x2="160" y2="528" stroke="#33475b" stroke-width="2"/>
+<polygon points="160,528 155.8,518.9 164.2,518.9" fill="#33475b"/>
+<line x1="160" y1="630" x2="160" y2="668" stroke="#33475b" stroke-width="2"/>
+<polygon points="160,668 155.8,658.9 164.2,658.9" fill="#33475b"/>
+<line x1="160" y1="770" x2="160" y2="808" stroke="#33475b" stroke-width="2"/>
+<polygon points="160,808 155.8,798.9 164.2,798.9" fill="#33475b"/>
+<text x="270" y="215" class="small" text-anchor="start">All 3 phases + N switched where required</text>
+<text x="270" y="335" class="small" text-anchor="start">30 mA may nuisance-trip on pump start; use 100 mA if needed</text>
+<text x="270" y="455" class="small" text-anchor="start">Motor-rated breaker preferred</text>
+<text x="270" y="585" class="small" text-anchor="start">Coil A1/A2: 415 V or 230 V according to contactor</text>
+<text x="270" y="725" class="small" text-anchor="start">Set to motor FLC (6.9 A)</text>
+<text x="480" y="110" class="t" text-anchor="start" font-weight="700">CONTROL CIRCUIT (230 V, 6 A MCB)</text>
+<line x1="510" y1="150" x2="510" y2="860" stroke="#c05656" stroke-width="2"/>
+<line x1="1210" y1="150" x2="1210" y2="860" stroke="#33475b" stroke-width="2"/>
+<text x="510" y="140" class="small" text-anchor="middle">L (after 6 A MCB)</text>
+<text x="1210" y="140" class="small" text-anchor="middle">N</text>
+<rect x="545" y="180" width="110" height="70" rx="8" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="600" y="207" class="b" text-anchor="middle">E-STOP</text>
+<text x="600" y="230" class="small" text-anchor="middle">NC, latching mushroom</text>
+<line x1="510" y1="215" x2="543" y2="215" stroke="#c05656" stroke-width="2"/>
+<line x1="655" y1="215" x2="690" y2="215" stroke="#c05656" stroke-width="2"/>
+<rect x="545" y="272" width="110" height="70" rx="8" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="600" y="299" class="b" text-anchor="middle">OVERLOAD NC</text>
+<text x="600" y="322" class="small" text-anchor="middle">95-96 opens on trip</text>
+<line x1="510" y1="307" x2="543" y2="307" stroke="#c05656" stroke-width="2"/>
+<line x1="655" y1="307" x2="690" y2="307" stroke="#c05656" stroke-width="2"/>
+<rect x="545" y="364" width="110" height="70" rx="8" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="600" y="391" class="b" text-anchor="middle">PHASE FAILURE</text>
+<text x="600" y="414" class="small" text-anchor="middle">NC, drops on phase loss</text>
+<line x1="510" y1="399" x2="543" y2="399" stroke="#c05656" stroke-width="2"/>
+<line x1="655" y1="399" x2="690" y2="399" stroke="#c05656" stroke-width="2"/>
+<rect x="545" y="456" width="110" height="70" rx="8" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="600" y="483" class="b" text-anchor="middle">TANK FULL</text>
+<text x="600" y="506" class="small" text-anchor="middle">safety float NC</text>
+<line x1="510" y1="491" x2="543" y2="491" stroke="#c05656" stroke-width="2"/>
+<line x1="655" y1="491" x2="690" y2="491" stroke="#c05656" stroke-width="2"/>
+<rect x="545" y="548" width="110" height="70" rx="8" fill="#fde8e8" stroke="#c05656" stroke-width="2"/>
+<text x="600" y="575" class="b" text-anchor="middle">SUMP DRY</text>
+<text x="600" y="598" class="small" text-anchor="middle">safety float NC</text>
+<line x1="510" y1="583" x2="543" y2="583" stroke="#c05656" stroke-width="2"/>
+<line x1="655" y1="583" x2="690" y2="583" stroke="#c05656" stroke-width="2"/>
+<line x1="690" y1="215" x2="690" y2="598" stroke="#c05656" stroke-width="2"/>
+<text x="700" y="220" class="small" text-anchor="start">Safety chain: all NC contacts in series. Any open = coil de-energised.</text>
+<rect x="730" y="610" width="200" height="120" rx="10" fill="#fff4d6" stroke="#c99a2e" stroke-width="2"/>
+<text x="742" y="634" class="b">AUTO / OFF / HAND</text>
+<text x="742" y="655" class="n">OFF: both contacts open</text>
+<text x="742" y="673" class="n">AUTO: ESP32 pump relay</text>
+<text x="742" y="691" class="n">HAND: local start/stop</text>
+<line x1="690" y1="650" x2="728" y2="650" stroke="#c05656" stroke-width="2"/>
+<line x1="930" y1="650" x2="970" y2="650" stroke="#c05656" stroke-width="2"/>
+<rect x="970" y="610" width="230" height="120" rx="10" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="982" y="634" class="b">AUTO contact</text>
+<text x="982" y="655" class="n">ESP32 GPIO33 -> relay IN13</text>
+<text x="982" y="673" class="n">COM/NO dry contact</text>
+<text x="982" y="691" class="n">Closes when firmware wants pump</text>
+<rect x="970" y="750" width="230" height="110" rx="10" fill="#f1f4f7" stroke="#7d8b99" stroke-width="2"/>
+<text x="982" y="774" class="b">HAND circuit</text>
+<text x="982" y="795" class="n">STOP NC -> START NO</text>
+<text x="982" y="813" class="n">Aux NO 13-14 latch</text>
+<text x="982" y="831" class="n">Local maintenance only</text>
+<line x1="1200" y1="670" x2="1210" y2="670" stroke="#c05656" stroke-width="2"/>
+<line x1="1200" y1="805" x2="1210" y2="805" stroke="#c05656" stroke-width="2"/>
+<line x1="1085" y1="730" x2="1085" y2="748" stroke="#c05656" stroke-width="2"/>
+<line x1="1085" y1="748" x2="1085" y2="750" stroke="#33475b" stroke-width="2"/>
+<polygon points="1085,750 1080.8,740.9 1089.2,740.9" fill="#33475b"/>
+<rect x="545" y="750" width="380" height="110" rx="10" fill="#e6f7ec" stroke="#4f9b67" stroke-width="2"/>
+<text x="557" y="774" class="b">Contactor coil A1 / A2</text>
+<text x="557" y="795" class="n">A1 from selected control path</text>
+<text x="557" y="813" class="n">A2 -> N</text>
+<text x="557" y="831" class="n">RC snubber + MOV across A1/A2</text>
+<text x="557" y="849" class="n">1 A fuse protects control circuit</text>
+<line x1="690" y1="725" x2="690" y2="748" stroke="#c05656" stroke-width="2"/>
+<line x1="690" y1="748" x2="545" y2="748" stroke="#c05656" stroke-width="2"/>
+<line x1="690" y1="748" x2="690" y2="780" stroke="#c05656" stroke-width="2"/>
+<line x1="690" y1="780" x2="690" y2="750" stroke="#33475b" stroke-width="2"/>
+<polygon points="690,750 694.2,759.1 685.8,759.1" fill="#33475b"/>
+<rect x="40" y="875" width="1220" height="38" rx="8" fill="#fff4d6" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="52" y="897" class="n" text-anchor="start">The ESP32 never switches 415 V directly. It only closes a 5 V relay contact in the contactor coil circuit.</text>
+</svg>
