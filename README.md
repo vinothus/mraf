@@ -87,9 +87,12 @@ curl -u admin:mraf-demo -H 'Content-Type: application/json' \
   -d '{}' http://localhost:8080/api/devices/SIM-000001/confirm
 ```
 
-See [docs/11-springboot-server.md](docs/11-springboot-server.md). A recorded
-walkthrough is at
-[docs/demo/mraf-springboot-demo.mp4](docs/demo/mraf-springboot-demo.mp4).
+See [docs/11-springboot-server.md](docs/11-springboot-server.md). Recorded
+walkthroughs are at
+[docs/demo/mraf-server-dashboard-demo.mp4](docs/demo/mraf-server-dashboard-demo.mp4)
+(admin login, ESP32 confirmation, device-user login and live controls) and
+[docs/demo/mraf-springboot-demo.mp4](docs/demo/mraf-springboot-demo.mp4)
+(the full dashboard tour).
 
 ## Quick start: Matter bridge
 
@@ -131,9 +134,12 @@ cd /opt/zephyrproject && west blobs fetch hal_espressif
 ```
 
 See [okf/zephyr-port.md](okf/zephyr-port.md) for the architecture and
-[okf/testing.md](okf/testing.md) for the full build and test guide. A short
-recorded walkthrough is at
-[docs/demo/zephyr-native-demo.mp4](docs/demo/zephyr-native-demo.mp4).
+[okf/testing.md](okf/testing.md) for the full build and test guide. Recorded
+walkthroughs are at
+[docs/demo/mraf-esp32-http-demo.mp4](docs/demo/mraf-esp32-http-demo.mp4)
+(local login and live pump/relay control on the device dashboard) and
+[docs/demo/zephyr-native-demo.mp4](docs/demo/zephyr-native-demo.mp4)
+(build, E2E and API terminal walkthrough).
 
 ## Quick start: Arduino reference firmware
 

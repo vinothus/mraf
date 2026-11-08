@@ -129,6 +129,10 @@ blobs are missing because the radio driver cannot link.
 
 ## Demo
 
+A local-login and live-control walkthrough of the device dashboard (native_sim
+running the ESP32 firmware, HTTP server on the device) is at
+[../docs/demo/mraf-esp32-http-demo.mp4](../docs/demo/mraf-esp32-http-demo.mp4).
+
 A 35-second terminal walkthrough of the native build, ESP32 build, E2E suite
 and live API is at
 [../docs/demo/zephyr-native-demo.mp4](../docs/demo/zephyr-native-demo.mp4).

@@ -205,12 +205,13 @@ curl -u admin:mraf-demo -H 'Content-Type: application/json' \
   -d '{}' http://localhost:8080/api/devices/SIM-000001/confirm
 ```
 
-A recorded walkthrough is in
-[demo/mraf-springboot-demo.mp4](demo/mraf-springboot-demo.mp4). The recording
-script now confirms the pending simulator and opens its device dashboard before
-showing telemetry, control, schedules and activity.
+A live login and control walkthrough is in
+[demo/mraf-server-dashboard-demo.mp4](demo/mraf-server-dashboard-demo.mp4):
+admin login, confirmation of the pending ESP32, device-user login as `farm`,
+then live relay and pump commands. The full dashboard tour is in
+[demo/mraf-springboot-demo.mp4](demo/mraf-springboot-demo.mp4).
 
-The browser recording is reproducible with Playwright:
+The full tour is reproducible with Playwright:
 
 ```bash
 cd /tmp
