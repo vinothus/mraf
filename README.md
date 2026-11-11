@@ -21,7 +21,8 @@ alive on a 12.8 V LiFePO4 battery while all relay coils drop out during a power 
 - Hardwired safety chain: E-stop, thermal overload, phase-failure relay, and
   float switches directly in the contactor coil circuit.
 - Wi-Fi station mode with AP fallback, mDNS (`http://mraf.local`), HTTP Basic
-  auth, NTP plus DS3231 RTC, and a responsive single-page dashboard.
+  auth, NTP plus DS3231 RTC, and a responsive single-page dashboard with
+  dark/bright theme selection that is remembered in the browser.
 - LiFePO4 controller battery, charged when mains is present; relay coils are
   on a separate mains-derived 5 V SMPS so a power cut always de-energises every
   load.
@@ -87,12 +88,12 @@ curl -u admin:mraf-demo -H 'Content-Type: application/json' \
   -d '{}' http://localhost:8080/api/devices/SIM-000001/confirm
 ```
 
-See [docs/11-springboot-server.md](docs/11-springboot-server.md). Recorded
-walkthroughs are at
+See [docs/11-springboot-server.md](docs/11-springboot-server.md). A recorded
+walkthrough in the bright theme is at
 [docs/demo/mraf-server-dashboard-demo.mp4](docs/demo/mraf-server-dashboard-demo.mp4)
-(admin login, ESP32 confirmation, device-user login and live controls) and
-[docs/demo/mraf-springboot-demo.mp4](docs/demo/mraf-springboot-demo.mp4)
-(the full dashboard tour).
+(admin login, theme selection, ESP32 confirmation, device-user login, live
+controls, schedules, recurring rules and activity). The dashboard has a
+dark/light theme toggle; the choice is remembered in the browser.
 
 ## Quick start: Matter bridge
 
@@ -137,9 +138,11 @@ See [okf/zephyr-port.md](okf/zephyr-port.md) for the architecture and
 [okf/testing.md](okf/testing.md) for the full build and test guide. Recorded
 walkthroughs are at
 [docs/demo/mraf-esp32-http-demo.mp4](docs/demo/mraf-esp32-http-demo.mp4)
-(local login and live pump/relay control on the device dashboard) and
+(local login, theme selection, live pump/relay control, schedules, recurring
+rules, settings and events in the bright theme) and
 [docs/demo/zephyr-native-demo.mp4](docs/demo/zephyr-native-demo.mp4)
-(build, E2E and API terminal walkthrough).
+(build, E2E and API terminal walkthrough). The device dashboard also includes a
+dark/light theme toggle, stored locally in the browser.
 
 ## Quick start: Arduino reference firmware
 

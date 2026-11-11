@@ -7,6 +7,7 @@ const PROFILES = ["agri", "home", "godown", "industry"];
 const EQUIPMENT = ["valve", "light", "motor", "fan", "pump", "socket", "heater", "door", "other"];
 const REPEATS = ["daily", "weekly", "monthly", "yearly"];
 const ACTIONS = ["on", "off", "auto"];
+const THEME_KEY = "mraf-theme";
 
 let me = null;
 let overview = null;
@@ -21,6 +22,27 @@ let toastTimer = null;
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function applyTheme(theme, persist = false) {
+  const light = theme === "light";
+  document.documentElement.dataset.theme = light ? "light" : "dark";
+  document.documentElement.style.colorScheme = light ? "light" : "dark";
+  const btn = $("#theme-toggle");
+  if (btn) {
+    btn.textContent = light ? "Dark theme" : "Light theme";
+    btn.setAttribute("aria-label", light ? "Switch to dark theme" : "Switch to light theme");
+  }
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, light ? "light" : "dark"); } catch (_) {}
+  }
+}
+
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+  const current = document.documentElement.dataset.theme;
+  applyTheme(saved === "light" || saved === "dark" ? saved : (current === "light" ? "light" : "dark"));
 }
 
 function showToast(message, error = false) {
@@ -575,4 +597,8 @@ document.addEventListener("change", ev => {
   if (ev.target.closest("#tab-sched") || ev.target.closest("#tab-rec")) draftDirty = true;
 });
 
+initTheme();
+$("#theme-toggle").addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true);
+});
 init();

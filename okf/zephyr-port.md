@@ -129,9 +129,13 @@ blobs are missing because the radio driver cannot link.
 
 ## Demo
 
-A local-login and live-control walkthrough of the device dashboard (native_sim
-running the ESP32 firmware, HTTP server on the device) is at
+A local-login walkthrough of the device dashboard in the bright theme
+(native_sim running the ESP32 firmware, HTTP server on the device) is at
 [../docs/demo/mraf-esp32-http-demo.mp4](../docs/demo/mraf-esp32-http-demo.mp4).
+It shows theme selection, live pump and relay control, daily and recurring
+schedules, settings and events. Re-record it with
+`scripts/record_esp32_demo.js` and the same Playwright setup described in
+`docs/11-springboot-server.md`.
 
 A 35-second terminal walkthrough of the native build, ESP32 build, E2E suite
 and live API is at

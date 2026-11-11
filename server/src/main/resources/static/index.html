@@ -4,6 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MRAF Remote Server</title>
+<script>
+(() => {
+  let theme = null;
+  try { theme = localStorage.getItem("mraf-theme"); } catch (_) {}
+  if (theme !== "light" && theme !== "dark") {
+    theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+})();
+</script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -16,6 +27,7 @@
     <span id="role-pill" class="pill">...</span>
     <span id="user-name" class="who"></span>
     <span id="link-pill" class="pill offline">Waiting</span>
+    <button id="theme-toggle" class="btn ghost" type="button" aria-label="Switch to light theme">Light theme</button>
     <button id="refresh" class="btn ghost" type="button">Refresh</button>
   </div>
 </header>

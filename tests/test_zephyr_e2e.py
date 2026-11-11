@@ -122,6 +122,8 @@ class ZephyrE2ETests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers.get("Content-Type", ""))
         self.assertIn(b"<title>MRAF Controller", payload)
+        self.assertIn(b'id="theme-toggle"', payload)
+        self.assertIn(b'html[data-theme="light"]', payload)
 
     def test_04_config_roundtrip(self):
         status, config = request_json("/api/config")

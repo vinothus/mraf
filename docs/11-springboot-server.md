@@ -110,6 +110,9 @@ The dashboard is a single-page app served from `static/`:
 - **Recurring** tab: up to eight daily/weekly/monthly/yearly schedules with
   channel selection, action and time window.
 - **Activity** tab: ACKs, events, queue inspection and cancellation.
+- **Theme**: a header button switches the whole dashboard between the dark and
+  bright (light) themes; the choice is stored in `localStorage` and applied
+  before first paint so reloads do not flash the other theme.
 
 Live data, ACK history and events are in memory and reset when the server
 restarts. Device registrations, credentials, configs, the last data snapshot
@@ -205,13 +208,13 @@ curl -u admin:mraf-demo -H 'Content-Type: application/json' \
   -d '{}' http://localhost:8080/api/devices/SIM-000001/confirm
 ```
 
-A live login and control walkthrough is in
+A live walkthrough in the bright theme is in
 [demo/mraf-server-dashboard-demo.mp4](demo/mraf-server-dashboard-demo.mp4):
-admin login, confirmation of the pending ESP32, device-user login as `farm`,
-then live relay and pump commands. The full dashboard tour is in
-[demo/mraf-springboot-demo.mp4](demo/mraf-springboot-demo.mp4).
+admin login, theme selection, confirmation of the pending ESP32, live relay and
+pump commands, schedules, recurring rules, the activity log and the device-user
+login as `farm`.
 
-The full tour is reproducible with Playwright:
+The walkthrough is reproducible with Playwright:
 
 ```bash
 cd /tmp
@@ -220,6 +223,7 @@ npm init -y
 npm i playwright@1.55.0
 npx playwright install chromium
 MRAF_VIDEO_DIR=/tmp/mraf-video/raw \
+  NODE_PATH=/tmp/mraf-video/node_modules \
   node /workspace/mraf/scripts/record_server_demo.js
 ```
 
