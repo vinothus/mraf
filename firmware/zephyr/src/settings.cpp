@@ -48,6 +48,16 @@ void settingsDefaults(Config &cfg) {
     cfg.max_boost_min = DEFAULT_MAX_BOOST_MIN;
     cfg.nrecurring = 0;
 
+    cfg.wireguard.enabled = false;
+    cfg.wireguard.configured = false;
+    copyStr(cfg.wireguard.interface, sizeof(cfg.wireguard.interface), DEFAULT_WG_INTERFACE);
+    cfg.wireguard.persistent_keepalive = DEFAULT_WG_KEEPALIVE;
+
+    cfg.webrtc.enabled = false;
+    copyStr(cfg.webrtc.server, sizeof(cfg.webrtc.server), "");
+    copyStr(cfg.webrtc.stun, sizeof(cfg.webrtc.stun), "");
+    cfg.webrtc.poll_ms = DEFAULT_WEBRTC_POLL_MS;
+
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
         ChannelConfig &ch = cfg.channels[i];
         snprintf(ch.name, sizeof(ch.name), "Relay %u", (unsigned)(i + 1));
@@ -338,6 +348,46 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
         }
     }
 
+    JsonObject wg = root["wireguard"].as<JsonObject>();
+    if (wg) {
+        WireGuardConfig &w = tmp.wireguard;
+        if (!wg["enabled"].isNull()) w.enabled = wg["enabled"].as<bool>();
+        if (!wg["configured"].isNull()) w.configured = wg["configured"].as<bool>();
+        jsonString(wg["interface"], w.interface, sizeof(w.interface), false);
+        jsonString(wg["address"], w.address, sizeof(w.address), false);
+        jsonString(wg["private_key"], w.private_key, sizeof(w.private_key), true);
+        jsonString(wg["dns"], w.dns, sizeof(w.dns), false);
+        JsonObject peer = wg["peer"].as<JsonObject>();
+        if (peer) {
+            jsonString(peer["public_key"], w.peer_public_key, sizeof(w.peer_public_key), false);
+            jsonString(peer["endpoint"], w.peer_endpoint, sizeof(w.peer_endpoint), false);
+            jsonString(peer["allowed_ips"], w.peer_allowed_ips, sizeof(w.peer_allowed_ips), false);
+            jsonString(peer["preshared_key"], w.peer_preshared_key, sizeof(w.peer_preshared_key), true);
+            if (!peer["persistent_keepalive"].isNull()) {
+                int v = peer["persistent_keepalive"].as<int>();
+                if (v < 0 || v > 3600) { error = "wireguard: persistent_keepalive must be 0..3600"; return false; }
+                w.persistent_keepalive = (uint16_t)v;
+            }
+        }
+    }
+
+    JsonObject wrtc = root["webrtc"].as<JsonObject>();
+    if (wrtc) {
+        WebRtcConfig &r = tmp.webrtc;
+        if (!wrtc["enabled"].isNull()) r.enabled = wrtc["enabled"].as<bool>();
+        jsonString(wrtc["server"], r.server, sizeof(r.server), false);
+        jsonString(wrtc["stun"], r.stun, sizeof(r.stun), false);
+        if (!wrtc["poll_ms"].isNull()) {
+            int v = wrtc["poll_ms"].as<int>();
+            if (v < 100 || v > 5000) { error = "webrtc: poll_ms must be 100..5000"; return false; }
+            r.poll_ms = (uint16_t)v;
+        }
+        if (r.enabled && r.server[0] == '\0') {
+            error = "webrtc: server required when enabled";
+            return false;
+        }
+    }
+
     JsonArray chans = root["channels"].as<JsonArray>();
     if (chans) {
         uint8_t i = 0;
@@ -499,6 +549,30 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
         coap["token"] = cfg.coap_token;
         coap["pass"] = cfg.remote_pass;
     }
+
+    const WireGuardConfig &w = cfg.wireguard;
+    JsonObject wg = root["wireguard"].to<JsonObject>();
+    wg["enabled"] = w.enabled;
+    wg["configured"] = w.configured;
+    wg["interface"] = w.interface;
+    wg["address"] = w.address;
+    wg["dns"] = w.dns;
+    JsonObject wpeer = wg["peer"].to<JsonObject>();
+    wpeer["public_key"] = w.peer_public_key;
+    wpeer["endpoint"] = w.peer_endpoint;
+    wpeer["allowed_ips"] = w.peer_allowed_ips;
+    wpeer["persistent_keepalive"] = w.persistent_keepalive;
+    if (include_secrets) {
+        wg["private_key"] = w.private_key;
+        wpeer["preshared_key"] = w.peer_preshared_key;
+    }
+
+    const WebRtcConfig &r = cfg.webrtc;
+    JsonObject wrtc = root["webrtc"].to<JsonObject>();
+    wrtc["enabled"] = r.enabled;
+    wrtc["server"] = r.server;
+    wrtc["stun"] = r.stun;
+    wrtc["poll_ms"] = r.poll_ms;
 
     JsonArray chans = root["channels"].to<JsonArray>();
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {

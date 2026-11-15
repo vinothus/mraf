@@ -1,4 +1,4 @@
-mainmenu "MRAF Farm Controller"
+mainmenu "Neer Kaavalan"
 
 menu "MRAF application"
 
@@ -15,9 +15,59 @@ config MRAF_SIMULATOR
 	  Enables the hardware simulation endpoints. They are inert on real
 	  hardware but still compiled so the shared API code is identical.
 
+config MRAF_MCP
+	bool "Expose the on-device Model Context Protocol endpoint (/mcp)"
+	default y
+	help
+	  Serves a JSON-RPC 2.0 Model Context Protocol endpoint on the device
+	  itself so an agent on the LAN can drive the controller without a
+	  round-trip through the remote server.
+
+config MRAF_WIREGUARD
+	bool "Install the WireGuard overlay pushed by the server"
+	default n
+	select WIREGUARD
+	help
+	  When enabled, a WireGuard tunnel configuration received over CoAP is
+	  installed into the Zephyr network stack. Requires the native Zephyr
+	  WireGuard service and a VPN-capable virtual interface.
+
+config MRAF_WEBRTC
+	bool "Serve the dashboard over a WebRTC data channel"
+	default n
+	help
+	  When enabled, the device answers the browser's WebRTC offer and serves
+	  dashboard data directly over an encrypted DTLS/SCTP data channel. The
+	  remote server only relays the SDP/ICE handshake and runs the STUN
+	  server, so live data never passes through it.
+	  The DTLS/SCTP transport itself is provided by the target's peer stack
+	  (see platform_esp32.cpp); on ESP32 this is the largest RAM consumer, so
+	  the option is off by default. The signalling client and command
+	  dispatcher are always compiled and remain inert when the transport
+	  reports unavailable.
+
+config MRAF_WEBRTC_SDP_MAX
+	int "Maximum SDP offer/answer size"
+	default 4096
+	range 1024 16384
+
+config MRAF_WEBRTC_MSG_MAX
+	int "Maximum data-channel message size"
+	default 2048
+	range 256 16384
+
 config MRAF_SETTINGS_PATH
-	string "Configuration file path (native_sim only)"
+	string "Configuration file path (native platform only)"
 	default "mraf-settings.json"
+
+config MRAF_PLATFORM_NATIVE
+	bool "Use the emulated-hardware platform backend (platform_native.cpp)"
+	default y if ARCH_POSIX
+	help
+	  Selects src/platform_native.cpp instead of src/platform_esp32.cpp.
+	  Enabled automatically for native_sim; turn it on for QEMU targets
+	  such as qemu_x86, which emulate the application without real radio
+	  or ADC hardware.
 
 config MRAF_NTP_SERVER
 	string "SNTP server used at boot"
@@ -25,17 +75,17 @@ config MRAF_NTP_SERVER
 
 config MRAF_SETTINGS_JSON_MAX
 	int "Maximum persisted configuration size"
-	default 8192
+	default 4096
 	range 1024 65536
 
 config MRAF_HTTP_REQ_MAX
 	int "Maximum HTTP request body size"
-	default 8192
+	default 4096
 	range 512 65536
 
 config MRAF_HTTP_RESP_MAX
 	int "Maximum HTTP response body size"
-	default 16384
+	default 8192
 	range 1024 131072
 
 endmenu

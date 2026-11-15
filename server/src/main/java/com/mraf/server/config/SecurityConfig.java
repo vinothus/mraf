@@ -13,6 +13,11 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 @Configuration
 public class SecurityConfig {
@@ -20,11 +25,26 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
+                .cors(Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/health").permitAll()
+                        // WebRTC config/signal/report are token-guarded inside the
+                        // controller (the browser is served by the device, not us).
+                        .requestMatchers("/api/webrtc/**").permitAll()
                         .anyRequest().authenticated())
                 .httpBasic(Customizer.withDefaults());
         return http.build();
+    }
+
+    @Bean
+    CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOriginPatterns(List.of("*"));
+        config.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of("*"));
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/webrtc/**", config);
+        return source;
     }
 
     /**

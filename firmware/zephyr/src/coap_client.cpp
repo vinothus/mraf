@@ -213,7 +213,7 @@ int coapPost(const char *host, uint16_t port, const char *path,
 
     const uint8_t *token = packet + 4;
     uint16_t mid = (uint16_t)((packet[2] << 8) | packet[3]);
-    static uint8_t in[4096];
+    static uint8_t in[3072];
 
     int result = -2;
     for (uint8_t attempt = 0; attempt < 2 && result == -2; attempt++) {

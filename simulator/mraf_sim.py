@@ -43,6 +43,45 @@ EQUIPMENT = ("valve", "light", "motor", "fan", "pump", "socket", "heater",
 REPEATS = ("daily", "weekly", "monthly", "yearly")
 ACTIONS = ("on", "off", "auto")
 
+try:
+    from webrtc_peer import WebRtcPeer  # type: ignore
+except Exception:  # pragma: no cover
+    try:
+        from simulator.webrtc_peer import WebRtcPeer  # type: ignore
+    except Exception:
+        WebRtcPeer = None  # type: ignore
+
+
+def _tool(name: str, description: str, props: dict, required: tuple = ()) -> dict:
+    schema: dict[str, Any] = {"type": "object", "properties": props}
+    if required:
+        schema["required"] = list(required)
+    return {"name": name, "description": description, "inputSchema": schema}
+
+
+MCP_TOOLS = [
+    _tool("get_status", "Read the full controller status document.", {}),
+    _tool("control_relay", "Switch or pulse one relay (1..12).", {
+        "relay_id": {"type": "integer", "description": "Relay id 1..12"},
+        "mode": {"type": "string", "description": "auto | on | off"},
+        "pulse_ms": {"type": "integer", "description": "Momentary pulse length in ms"},
+    }, ("relay_id", "mode")),
+    _tool("control_pump", "Control the pump contactor, optionally boosting.", {
+        "mode": {"type": "string", "description": "auto | on | off"},
+        "boost_min": {"type": "integer", "description": "Boost duration in minutes"},
+    }, ("mode",)),
+    _tool("set_all", "Set every output to auto or off.", {
+        "mode": {"type": "string", "description": "auto | off"},
+    }, ("mode",)),
+    _tool("apply_config", "Validate and apply a full configuration document.", {
+        "config": {"type": "object", "description": "ControllerConfig document"},
+    }, ("config",)),
+    _tool("wireguard_status", "Show the WireGuard overlay state.", {}),
+    _tool("chat", "Send a natural-language command using the on-device grammar.", {
+        "text": {"type": "string", "description": "e.g. 'turn on relay 3'"},
+    }, ("text",)),
+]
+
 
 class ConfigError(ValueError):
     pass
@@ -94,7 +133,7 @@ def merge_config(base: dict, incoming: dict) -> dict:
     if not isinstance(incoming, dict):
         raise ConfigError("config must be a JSON object")
     out = copy.deepcopy(base)
-    for key in ("device", "wifi", "coap", "safety"):
+    for key in ("device", "wifi", "coap", "safety", "webrtc"):
         _merge_section(out, incoming, key)
 
     chans = incoming.get("channels")
@@ -205,6 +244,8 @@ def normalize_config(cfg: dict) -> dict:
     out.setdefault("device", {})
     out.setdefault("wifi", {})
     out.setdefault("coap", {})
+    out.setdefault("wireguard", {})
+    out.setdefault("webrtc", {})
     out.setdefault("safety", {})
     out.setdefault("pump", {})
     out.setdefault("channels", [])
@@ -272,7 +313,7 @@ def normalize_config(cfg: dict) -> dict:
         out["safety"].get("max_boost_min"), 180, 1, 1440, "safety: max_boost_min"
     )
     dev = out["device"]
-    dev["name"] = str(dev.get("name") or "MRAF Farm Controller")[:39]
+    dev["name"] = str(dev.get("name") or "Neer Kaavalan")[:39]
     dev["timezone"] = str(dev.get("timezone") or "IST-5:30")[:15]
     dev["auth_user"] = str(dev.get("auth_user") or "admin")[:19]
     dev["auth_pass"] = str(dev.get("auth_pass") or "farm1234")[:31]
@@ -300,6 +341,33 @@ def normalize_config(cfg: dict) -> dict:
     if coap["enabled"] and not coap["host"]:
         raise ConfigError("coap: host required when enabled")
 
+    wg = out["wireguard"]
+    if not isinstance(wg, dict):
+        raise ConfigError("wireguard must be an object")
+    wg["enabled"] = bool(wg.get("enabled", False))
+    wg["interface"] = str(wg.get("interface") or "wg0")[:15]
+    wg["address"] = str(wg.get("address") or "")[:31]
+    wg["dns"] = str(wg.get("dns") or "")[:63]
+    wg["private_key"] = str(wg.get("private_key") or "")[:63]
+    wg["peer_public_key"] = str(wg.get("peer_public_key") or "")[:63]
+    wg["peer_endpoint"] = str(wg.get("peer_endpoint") or "")[:63]
+    wg["peer_allowed_ips"] = str(wg.get("peer_allowed_ips") or "")[:63]
+    wg["peer_preshared_key"] = str(wg.get("peer_preshared_key") or "")[:63]
+    wg["persistent_keepalive"] = _int(
+        wg.get("persistent_keepalive"), 25, 0, 3600, "wireguard: persistent_keepalive"
+    )
+    wg["configured"] = bool(
+        wg["address"] and wg["private_key"] and wg["peer_public_key"]
+    )
+
+    wrc = out["webrtc"]
+    if not isinstance(wrc, dict):
+        raise ConfigError("webrtc must be an object")
+    wrc["enabled"] = bool(wrc.get("enabled", False))
+    wrc["server"] = str(wrc.get("server") or "")[:127]
+    wrc["stun"] = str(wrc.get("stun") or "")[:127]
+    wrc["poll_ms"] = _int(wrc.get("poll_ms"), 400, 100, 5000, "webrtc: poll_ms")
+
     out["recurring"] = _recurring(out.get("recurring") or [])
     return out
 
@@ -310,6 +378,8 @@ def public_config(cfg: dict) -> dict:
     out.get("wifi", {}).pop("password", None)
     out.get("coap", {}).pop("token", None)
     out.get("coap", {}).pop("pass", None)
+    out.get("wireguard", {}).pop("private_key", None)
+    out.get("wireguard", {}).pop("peer_preshared_key", None)
     out.pop("sim", None)
     return out
 
@@ -317,6 +387,128 @@ def public_config(cfg: dict) -> dict:
 def load_config(path: Path) -> dict:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return normalize_config(data)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic intent grammar (mirrors server IntentParser + firmware intent.cpp)
+# ---------------------------------------------------------------------------
+INTENT_HELP = ("Try: 'turn on relay 3', 'relay 5 off', 'pulse relay 2 for 800 ms', "
+               "'pump on', 'boost pump 30 min', 'all off', 'all auto', 'status'.")
+
+_RELAY_ID = re.compile(
+    r"\b(?:relay|channel|output|zone|light|valve|fan|motor|socket|heater|door)\s*#?\s*(\d{1,2})\b")
+_HASH_ID = re.compile(r"#\s*(\d{1,2})\b")
+_PULSE_MS = re.compile(r"(\d{2,5})\s*(?:ms|millis|milliseconds)")
+_BOOST_MIN = re.compile(r"(\d{1,4})\s*(?:min|minute|minutes)")
+_WORD_ON = re.compile(r"\b(on|start|run|enable|enabled|activate)\b")
+_WORD_OFF = re.compile(r"\b(off|stop|disable|disabled|deactivate|kill)\b")
+_WORD_AUTO = re.compile(r"\b(auto|automatic|automatic mode|scheduled)\b")
+
+
+def _intent(action: str, target: str = "", relay_id: int = 0, mode: str = "",
+            pulse_ms: Optional[int] = None, boost_min: Optional[int] = None,
+            reply: str = "", understood: bool = True) -> dict:
+    return {"action": action, "target": target, "relay_id": relay_id, "mode": mode,
+            "pulse_ms": pulse_ms, "boost_min": boost_min, "reply": reply,
+            "understood": understood}
+
+
+def _contains(t: str, *needles: str) -> bool:
+    return any(n in t for n in needles)
+
+
+def _detect_mode(t: str) -> Optional[str]:
+    if _WORD_AUTO.search(t):
+        return "auto"
+    if _WORD_OFF.search(t):
+        return "off"
+    if _WORD_ON.search(t):
+        return "on"
+    return None
+
+
+def _match_relay(t: str) -> Optional[int]:
+    m = _RELAY_ID.search(t)
+    if m:
+        return int(m.group(1))
+    m = _HASH_ID.search(t)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def parse_intent(text: str) -> dict:
+    raw = (text or "").strip()
+    if not raw:
+        return _intent("help", reply="Say things like 'turn on relay 3', 'pump off', "
+                       "'all auto', 'boost pump 30 min' or 'status'.")
+    t = re.sub(r"[^a-z0-9#:.\s]", " ", raw.lower())
+    t = re.sub(r"\s+", " ", t).strip()
+
+    if re.fullmatch(r"(help|commands|what can you do.*|how do i.*|\?)", t):
+        return _intent("help", reply=INTENT_HELP)
+
+    wants_status = _contains(t, "status", "report", "summary") or (
+        "how" in t and (" is " in t or " are " in t or t.startswith("how is")
+                        or t.startswith("how are")))
+    wants_data = t == "data" or (
+        _contains(t, "data", "telemetry", "reading", "readings", "sensors", "sensor")
+        and _contains(t, "request", "get", "fetch", "read", "send", "give", "now", "poll"))
+
+    if wants_status:
+        return _intent("status", reply="Fetching the latest controller status.")
+    if wants_data:
+        return _intent("data", reply="Requesting a fresh status snapshot from the controller.")
+
+    all_ = _contains(t, "all", "everything", "every relay", "every output")
+    pump = _contains(t, "pump", "borewell", "contactor")
+    mp = _PULSE_MS.search(t)
+    pulse_ms = int(mp.group(1)) if mp else None
+    mb = _BOOST_MIN.search(t)
+    boost_min = int(mb.group(1)) if mb else None
+
+    if "boost" in t:
+        minutes = boost_min if boost_min is not None else 30
+        return _intent("control", "pump", mode="auto", boost_min=minutes,
+                       reply=f"Boosting the pump for {minutes} minutes.")
+
+    mode = _detect_mode(t)
+
+    if all_:
+        if mode is None:
+            return _intent("unknown", understood=False,
+                           reply="Tell me whether to turn everything on, off or to auto.")
+        if mode == "on":
+            return _intent("control", "all", mode="auto",
+                           reply="Turning all outputs on is not allowed; using auto instead.")
+        return _intent("control", "all", mode=mode, reply=f"Setting all outputs to {mode}.")
+
+    relay_id = _match_relay(t)
+
+    if pump and relay_id is None:
+        if mode is None:
+            return _intent("unknown", understood=False,
+                           reply="Tell me whether to turn the pump on, off or to auto.")
+        return _intent("control", "pump", mode=mode, reply=f"Setting the pump to {mode}.")
+
+    if relay_id is not None:
+        if relay_id < 1 or relay_id > MAX_CHANNELS:
+            return _intent("unknown", understood=False,
+                           reply=f"Relay {relay_id} does not exist; valid ids are 1..{MAX_CHANNELS}.")
+        if pulse_ms is not None:
+            return _intent("control", "relay", relay_id=relay_id, mode="on",
+                           pulse_ms=pulse_ms, reply=f"Pulsing relay {relay_id} for {pulse_ms} ms.")
+        if mode is None:
+            return _intent("unknown", understood=False,
+                           reply=f"Tell me whether to turn relay {relay_id} on, off or to auto.")
+        return _intent("control", "relay", relay_id=relay_id, mode=mode,
+                       reply=f"Setting relay {relay_id} to {mode}.")
+
+    if mode is not None:
+        return _intent("unknown", understood=False,
+                       reply="Which output should I switch? Mention a relay number or the pump.")
+    return _intent("unknown", understood=False,
+                   reply=f"I did not understand that. {INTENT_HELP}")
 
 
 # ---------------------------------------------------------------------------
@@ -857,11 +1049,13 @@ class SimApp:
         self.host = host
         self.port = port
         self.lock = threading.RLock()
+        self.wg_active = bool(self.cfg["wireguard"]["configured"])
         self._sim_cursor = self.clock.now()
         self._last_tick_t = self._sim_cursor
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.start_mono = time.monotonic()
+        self.webrtc = WebRtcPeer(self) if WebRtcPeer else None
         self.controller.add_event("system", "boot", self._sim_cursor)
 
     # -- simulation loop ----------------------------------------------------
@@ -911,15 +1105,21 @@ class SimApp:
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="mraf-sim", daemon=True)
         self._thread.start()
+        if self.webrtc:
+            self.webrtc.start()
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2.0)
+        if self.webrtc:
+            self.webrtc.stop()
 
     # -- status / config ----------------------------------------------------
     def _status_locked(self, now: float) -> dict:
         self.controller.service_pulses(now)
+        wg = self.cfg["wireguard"]
+        wrc = self.cfg["webrtc"]
         dt = datetime.fromtimestamp(now, self.tz)
         wd_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         relays = []
@@ -986,6 +1186,16 @@ class SimApp:
                 "last_error": "simulator does not poll CoAP" if self.cfg["coap"]["enabled"] else "",
                 "last_poll": 0,
                 "last_code": 0,
+                "wireguard": {
+                    "enabled": wg["enabled"],
+                    "configured": wg["configured"],
+                    "active": self.wg_active,
+                    "interface": wg["interface"],
+                    "address": wg["address"],
+                    "endpoint": wg["peer_endpoint"],
+                    "allowed_ips": wg["peer_allowed_ips"],
+                    "persistent_keepalive": wg["persistent_keepalive"],
+                },
             },
             "power": {
                 "present": self.sim["mains"],
@@ -1026,6 +1236,7 @@ class SimApp:
                 "dry_run_grace_sec": p["dry_run_grace_sec"],
                 "windows": copy.deepcopy(p["windows"]),
             },
+            "webrtc": self._webrtc_status_locked(wrc),
             "events": events,
             "sim": {
                 "mains": self.sim["mains"],
@@ -1069,6 +1280,7 @@ class SimApp:
         with self.lock:
             now = self.clock.now()
             self._advance_locked(now)
+            old_webrtc = dict(self.cfg.get("webrtc") or {})
             merged = merge_config(self.cfg, incoming)
             new_cfg = normalize_config(merged)
             self.cfg = new_cfg
@@ -1076,7 +1288,189 @@ class SimApp:
             self.controller.tz = self.tz
             self.controller.apply_config(new_cfg)
             self._tick_once_locked(now)
-            return public_config(self.cfg)
+            out = public_config(self.cfg)
+        if old_webrtc != (new_cfg.get("webrtc") or {}):
+            self._restart_webrtc()
+        return out
+
+    def _restart_webrtc(self) -> None:
+        if self.webrtc:
+            self.webrtc.stop()
+        if WebRtcPeer:
+            self.webrtc = WebRtcPeer(self)
+            self.webrtc.start()
+
+    # -- chat / wireguard / MCP --------------------------------------------
+    def chat(self, text: str) -> dict:
+        intent = parse_intent(text)
+        with self.lock:
+            now = self.clock.now()
+            self._advance_locked(now)
+            if intent["action"] == "control":
+                try:
+                    self.control(intent["target"], intent["mode"],
+                                 intent["relay_id"], intent["boost_min"] or 0,
+                                 intent["pulse_ms"] or 0)
+                    intent["applied"] = True
+                    self.controller.add_event(
+                        "chat", f"{intent['target']} -> {intent['mode']}", now)
+                except (ConfigError, ValueError) as exc:
+                    intent["applied"] = False
+                    intent["error"] = str(exc)
+            elif intent["action"] == "status":
+                intent["status"] = self._status_locked(now)
+            return intent
+
+    def _webrtc_status_locked(self, wrc: dict) -> dict:
+        peer = self.webrtc
+        return {
+            "enabled": wrc["enabled"],
+            "available": bool(peer and peer.enabled),
+            "server": wrc["server"],
+            "stun": (peer.stun_url if peer else wrc["stun"]),
+            "state": (peer.state if peer else "disabled"),
+            "connected": bool(peer and peer.state == "connected"),
+            "rtt_ms": (peer.rtt_ms if peer else None),
+            "rx_bytes": (peer.rx_bytes if peer else 0),
+            "tx_bytes": (peer.tx_bytes if peer else 0),
+            "last_error": (peer.last_error if peer else ""),
+        }
+
+    def webrtc_status(self) -> dict:
+        with self.lock:
+            return self._webrtc_status_locked(self.cfg["webrtc"])
+
+    def webrtc_config(self) -> dict:
+        """Settings the browser needs to open a peer connection to this device.
+
+        Served over the device's own authenticated HTTP API. The signalling
+        token lets the browser talk to the Spring Boot control plane; it never
+        reaches the dashboard otherwise.
+        """
+        wrc = self.cfg["webrtc"]
+        with self.lock:
+            status = self._webrtc_status_locked(wrc)
+        return {
+            "enabled": wrc["enabled"],
+            "device_id": self.cfg["device"]["device_id"],
+            "server": wrc["server"],
+            "stun": wrc["stun"],
+            "token": self.cfg["coap"]["token"],
+            "transport": "datachannel",
+            "poll_ms": wrc["poll_ms"],
+            "peer": status,
+        }
+
+    def wireguard_status(self) -> dict:
+        with self.lock:
+            wg = self.cfg["wireguard"]
+            return {
+                "enabled": wg["enabled"],
+                "configured": wg["configured"],
+                "active": self.wg_active,
+                "interface": wg["interface"],
+                "address": wg["address"],
+                "endpoint": wg["peer_endpoint"],
+                "allowed_ips": wg["peer_allowed_ips"],
+                "persistent_keepalive": wg["persistent_keepalive"],
+            }
+
+    def wireguard_configure(self, incoming: dict) -> dict:
+        """Apply a server-style WireGuard payload (flat shape)."""
+        if not isinstance(incoming, dict):
+            raise ConfigError("wireguard payload must be an object")
+        peer = incoming.get("peer") if isinstance(incoming.get("peer"), dict) else {}
+        wg = self.cfg["wireguard"]
+        wg["interface"] = str(incoming.get("interface") or wg["interface"])[:15]
+        wg["address"] = str(incoming.get("address") or "")[:31]
+        wg["private_key"] = str(incoming.get("private_key") or "")[:63]
+        wg["dns"] = str(incoming.get("dns") or "")[:63]
+        wg["peer_public_key"] = str(peer.get("public_key") or "")[:63]
+        wg["peer_endpoint"] = str(peer.get("endpoint") or "")[:63]
+        wg["peer_allowed_ips"] = str(peer.get("allowed_ips") or "")[:63]
+        wg["peer_preshared_key"] = str(peer.get("preshared_key") or "")[:63]
+        if peer.get("persistent_keepalive") is not None:
+            wg["persistent_keepalive"] = _int(
+                peer.get("persistent_keepalive"), 25, 0, 3600,
+                "wireguard: persistent_keepalive")
+        wg["enabled"] = True
+        wg["configured"] = bool(wg["address"] and wg["private_key"]
+                                and wg["peer_public_key"])
+        with self.lock:
+            now = self.clock.now()
+            self.wg_active = wg["configured"]
+            if wg["configured"]:
+                self.controller.add_event("remote", "WireGuard config applied", now)
+                result = "applied"
+            else:
+                result = "rejected"
+            return {"ok": True, "result": result, "wireguard": self.wireguard_status()}
+
+    def mcp_handle(self, request: dict) -> Optional[dict]:
+        if not isinstance(request, dict):
+            return {"jsonrpc": "2.0", "id": None,
+                    "error": {"code": -32600, "message": "invalid request"}}
+        rid = request.get("id")
+        if rid is None:
+            return None
+        method = request.get("method") or ""
+        response: dict = {"jsonrpc": "2.0", "id": rid}
+        if method == "initialize":
+            params = request.get("params") or {}
+            response["result"] = {
+                "protocolVersion": params.get("protocolVersion", "2025-06-18"),
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mraf-simulator", "version": FW_VERSION},
+                "instructions": ("Control this MRAF farm controller. Use get_status, "
+                                 "control_relay, control_pump, set_all, apply_config, "
+                                 "wireguard_status and chat."),
+            }
+        elif method == "ping":
+            response["result"] = {}
+        elif method == "tools/list":
+            response["result"] = {"tools": MCP_TOOLS}
+        elif method == "tools/call":
+            response["result"] = self._mcp_call(request.get("params") or {})
+        else:
+            response["error"] = {"code": -32601, "message": "method not found"}
+        return response
+
+    def _mcp_call(self, params: dict) -> dict:
+        name = params.get("name") or ""
+        args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        try:
+            out = self._mcp_tool(name, args)
+            return {"content": [{"type": "text", "text": json.dumps(out)}],
+                    "isError": False}
+        except (ConfigError, ValueError, KeyError, TypeError) as exc:
+            return {"content": [{"type": "text", "text": str(exc)}], "isError": True}
+
+    def _mcp_tool(self, name: str, args: dict) -> dict:
+        with self.lock:
+            now = self.clock.now()
+            self._advance_locked(now)
+            if name == "get_status":
+                return self._status_locked(now)
+            if name == "wireguard_status":
+                return self.wireguard_status()
+            if name == "chat":
+                return self.chat(args.get("text") or "")
+            if name == "control_relay":
+                self.control("relay", args.get("mode") or "auto",
+                             int(args.get("relay_id") or 0), 0, int(args.get("pulse_ms") or 0))
+            elif name == "control_pump":
+                self.control("pump", args.get("mode") or "auto",
+                             0, int(args.get("boost_min") or 0))
+            elif name == "set_all":
+                self.control("all", args.get("mode") or "off")
+            elif name == "apply_config":
+                cfg = args.get("config")
+                if not isinstance(cfg, dict):
+                    raise ConfigError("config must be an object")
+                return {"applied": True, "config": self.set_config(cfg)}
+            else:
+                raise ConfigError("unknown tool")
+            return {"applied": True}
 
     def control(self, target: str, mode: str, relay_id: int = 0,
                 boost_min: int = 0, pulse_ms: int = 0) -> dict:
@@ -1292,6 +1686,12 @@ class SimHandler(BaseHTTPRequestHandler):
             self._send(200, app.config_api())
         elif path == "/api/events":
             self._send(200, {"events": app.events()})
+        elif path == "/api/wireguard":
+            self._send(200, app.wireguard_status())
+        elif path == "/api/webrtc":
+            self._send(200, app.webrtc_config())
+        elif path == "/api/webrtc/status":
+            self._send(200, app.webrtc_status())
         elif path == "/api/wifi/scan":
             self._send(200, {"networks": []})
         else:
@@ -1308,6 +1708,16 @@ class SimHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/config":
                 self._send(200, {"ok": True, **app.set_config(body)})
+            elif path == "/api/chat":
+                self._send(200, app.chat(str(body.get("text") or body.get("message") or "")))
+            elif path == "/api/wireguard":
+                self._send(200, app.wireguard_configure(body))
+            elif path == "/mcp":
+                response = app.mcp_handle(body)
+                if response is None:
+                    self._send(202, b"", "application/json; charset=utf-8")
+                else:
+                    self._send(200, response)
             elif path == "/api/control":
                 status = app.control(
                     str(body.get("target", "")),
@@ -1403,6 +1813,14 @@ def build_app(args: argparse.Namespace) -> SimApp:
     cfg = load_config(Path(args.config))
     if args.speed is not None and args.scenario is None:
         cfg.setdefault("sim", {})["speed"] = args.speed
+    if getattr(args, "webrtc_server", None):
+        cfg.setdefault("webrtc", {})["server"] = args.webrtc_server
+    if getattr(args, "webrtc", False):
+        cfg.setdefault("webrtc", {})["enabled"] = True
+    if getattr(args, "webrtc_stun", None):
+        cfg.setdefault("webrtc", {})["stun"] = args.webrtc_stun
+    if getattr(args, "token", None) is not None:
+        cfg.setdefault("coap", {})["token"] = args.token
     auth = None
     if args.auth:
         if ":" not in args.auth:
@@ -1431,6 +1849,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--scenario", default=None,
                     help="pump-morning | relay-evening | outage | dry-run | tank-full | sump-dry | night")
     ap.add_argument("--auth", default=None, help="optional user:password for HTTP Basic auth")
+    ap.add_argument("--webrtc", action="store_true",
+                    help="enable the WebRTC data-channel peer")
+    ap.add_argument("--webrtc-server", default=None,
+                    help="Spring Boot control-plane URL, e.g. http://localhost:8085")
+    ap.add_argument("--webrtc-stun", default=None,
+                    help="optional explicit STUN URL, e.g. stun:localhost:3478")
+    ap.add_argument("--token", default=None,
+                    help="shared signalling/CoAP token for the control plane")
     ap.add_argument("--verbose", action="store_true", help="log HTTP requests")
     args = ap.parse_args(argv)
 
@@ -1444,6 +1870,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"  timezone  : {app.tz.tzname(None)}")
     print(f"  speed     : {app.sim['speed']}x simulated seconds per real second")
     print(f"  scenario  : {args.scenario or 'none (live clock)'}")
+    if app.webrtc and app.webrtc.enabled:
+        print(f"  webrtc    : enabled -> {app.webrtc.server}")
+    else:
+        print("  webrtc    : disabled")
     print("  press Ctrl+C to stop")
     try:
         server.serve_forever(poll_interval=0.25)

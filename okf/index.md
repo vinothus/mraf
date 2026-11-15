@@ -1,12 +1,12 @@
 ---
 okf: 1
-title: MRAF Farm Controller
+title: நீர்காவலன் Neer Kaavalan (MRAF Farm Controller)
 type: index
-updated: 2026-11-08
+updated: 2026-11-14
 tags: [mraf, esp32, zephyr, irrigation, pump, rest]
 ---
 
-# MRAF Farm Controller - knowledge index
+# நீர்காவலன் Neer Kaavalan - knowledge index
 
 MRAF is an ESP32 farm controller for twelve scheduled single-phase loads and a
 5 HP three-phase borewell pump. The production firmware now targets Zephyr
@@ -38,5 +38,7 @@ make zephyr-flash PORT=/dev/ttyUSB0
 - ESP32 `esp32_devkitc/esp32/procpu` firmware builds with Wi-Fi, RTC, ADC,
   NVS settings and mDNS enabled.
 - The Python simulator remains the reference for demo scenarios and UI work.
+- WireGuard overlay, on-device MCP and offline grammar chat are implemented on
+  the firmware, the server and the simulator.
 - Existing Spring Boot CoAP server and Matter bridge integrations are
   unchanged.

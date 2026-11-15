@@ -18,6 +18,7 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -43,6 +44,7 @@ public class RemoteStateService {
     private static final Pattern TIME = Pattern.compile("^([01]\\d|2[0-3]):[0-5]\\d$");
     private static final int MAX_EVENTS = 40;
     private static final int MAX_ACKS = 20;
+    private static final int MAX_CONSOLE = 200;
     private static final Set<String> PROFILES =
             Set.of("agri", "home", "godown", "industry");
     private static final Set<String> EQUIPMENT =
@@ -60,6 +62,7 @@ public class RemoteStateService {
     private final String serverTimezone;
     private final DeviceRepository deviceRepo;
     private final DeviceRequestRepository requestRepo;
+    private final ApplicationEventPublisher events;
     private final PasswordEncoder encoder =
             PasswordEncoderFactories.createDelegatingPasswordEncoder();
     private final Map<String, Device> devices = new LinkedHashMap<>();
@@ -67,11 +70,13 @@ public class RemoteStateService {
     public RemoteStateService(ObjectMapper mapper,
                               DeviceRepository deviceRepo,
                               DeviceRequestRepository requestRepo,
+                              ApplicationEventPublisher events,
                               @Value("${mraf.token:}") String configuredToken,
                               @Value("${mraf.server-timezone:Asia/Kolkata}") String serverTimezone) {
         this.mapper = mapper;
         this.deviceRepo = deviceRepo;
         this.requestRepo = requestRepo;
+        this.events = events;
         this.configuredToken = configuredToken == null ? "" : configuredToken;
         this.serverTimezone = serverTimezone;
     }
@@ -293,7 +298,8 @@ public class RemoteStateService {
 
         JsonNode ack = request.get("ack");
         if (ack != null && !ack.asText("").isBlank()) {
-            recordAck(dev, ack.asText(), request.path("result").asText("done"));
+            recordAck(dev, ack.asText(), request.path("result").asText("done"),
+                    request.path("console").asText(""));
         }
 
         if (dev.lastData == null && dev.inflight == null && dev.queue.isEmpty()) {
@@ -376,7 +382,7 @@ public class RemoteStateService {
         return response;
     }
 
-    private void recordAck(Device dev, String id, String result) {
+    private void recordAck(Device dev, String id, String result, String consoleOutput) {
         ObjectNode ack = mapper.createObjectNode();
         ack.put("id", id);
         ack.put("result", result);
@@ -391,10 +397,26 @@ public class RemoteStateService {
         if (dev.inflight != null && dev.inflight.id.equals(id)) {
             RemoteRequest done = dev.inflight;
             dev.inflight = null;
+            if (done.type == RequestType.CONSOLE) {
+                recordConsole(dev, done, consoleOutput, result);
+            }
             addEvent(dev, "ack", done.type.name().toLowerCase(Locale.ROOT)
                     + " " + id + " -> " + result);
+            events.publishEvent(new MrafEvents.RequestAcked(dev.id, done.type.name()));
         } else {
             addEvent(dev, "ack", "Late ack " + id + " -> " + result);
+        }
+    }
+
+    private void recordConsole(Device dev, RemoteRequest req, String output, String result) {
+        ObjectNode entry = mapper.createObjectNode();
+        entry.put("at", ISO.format(Instant.now()));
+        entry.put("command", req.payload.path("command").asText(""));
+        entry.put("output", output == null ? "" : output);
+        entry.put("ok", !"rejected".equalsIgnoreCase(result));
+        dev.consoleLog.addLast(entry);
+        while (dev.consoleLog.size() > MAX_CONSOLE) {
+            dev.consoleLog.removeFirst();
         }
     }
 
@@ -416,6 +438,7 @@ public class RemoteStateService {
         }
         persist(dev);
         addEvent(dev, "admin", "Device confirmed by admin");
+        events.publishEvent(new MrafEvents.DeviceConfirmed(dev.id));
         return summary(dev);
     }
 
@@ -460,7 +483,7 @@ public class RemoteStateService {
         return new ArrayList<>(devices.keySet());
     }
 
-    synchronized void clearAllDevices() {
+    public synchronized void clearAllDevices() {
         requestRepo.deleteAll();
         deviceRepo.deleteAll();
         devices.clear();
@@ -495,6 +518,28 @@ public class RemoteStateService {
         return r;
     }
 
+    /**
+     * Queues a WireGuard tunnel configuration for a controller. Any previously
+     * queued or in-flight WireGuard request is superseded so the device always
+     * receives the newest key material.
+     */
+    public synchronized ObjectNode queueWireGuard(String id, JsonNode config) {
+        Device dev = requireDevice(id);
+        dev.queue.removeIf(r -> r.type == RequestType.WIREGUARD);
+        if (dev.inflight != null && dev.inflight.type == RequestType.WIREGUARD) {
+            dev.inflight = null;
+        }
+        ObjectNode payload = config != null && config.isObject()
+                ? ((ObjectNode) config).deepCopy() : mapper.createObjectNode();
+        String rid = dev.id + "-wg-" + (++dev.requestSeq);
+        RemoteRequest r = new RemoteRequest(rid, RequestType.WIREGUARD, payload);
+        dev.queue.addLast(r);
+        persistRequest(dev, r, "QUEUED");
+        persist(dev);
+        addEvent(dev, "queue", "Queued WireGuard config " + rid);
+        return requestSummary(dev, "queued", r);
+    }
+
     public synchronized ObjectNode queueControl(String id, JsonNode body) {
         Device dev = requireDevice(id);
         ArrayNode commands = mapper.createArrayNode();
@@ -519,6 +564,30 @@ public class RemoteStateService {
         updateModesOptimistically(dev, commands);
         persist(dev);
         addEvent(dev, "queue", "Queued control request " + rid);
+        return requestSummary(dev, "queued", r);
+    }
+
+    /**
+     * Queues a shell command for the controller's on-device Zephyr console.
+     * The device executes it and returns the captured output on the next poll.
+     */
+    public synchronized ObjectNode queueConsole(String id, String command) {
+        Device dev = requireDevice(id);
+        String cmd = command == null ? "" : command.trim();
+        if (cmd.isEmpty()) {
+            throw new IllegalArgumentException("command is required");
+        }
+        if (cmd.length() > 200) {
+            throw new IllegalArgumentException("command must be 200 characters or fewer");
+        }
+        ObjectNode payload = mapper.createObjectNode();
+        payload.put("command", cmd);
+        String rid = dev.id + "-con-" + (++dev.requestSeq);
+        RemoteRequest r = new RemoteRequest(rid, RequestType.CONSOLE, payload);
+        dev.queue.addLast(r);
+        persistRequest(dev, r, "QUEUED");
+        persist(dev);
+        addEvent(dev, "queue", "Queued console command: " + cmd);
         return requestSummary(dev, "queued", r);
     }
 
@@ -810,6 +879,34 @@ public class RemoteStateService {
         return out;
     }
 
+    public synchronized ObjectNode consoleSnapshot(String id) {
+        Device dev = requireDevice(id);
+        ObjectNode out = mapper.createObjectNode();
+        out.put("deviceId", dev.id);
+        out.put("name", dev.name == null || dev.name.isBlank() ? dev.id : dev.name);
+        out.put("online", isOnline(dev));
+        out.put("confirmed", dev.confirmed);
+        out.put("rejected", dev.rejected);
+        out.put("firmware", dev.firmware);
+        out.put("pollIntervalSec", dev.pollIntervalSec);
+        long pending = dev.queue.stream().filter(r -> r.type == RequestType.CONSOLE).count();
+        out.put("pending", pending + (dev.inflight != null
+                && dev.inflight.type == RequestType.CONSOLE ? 1 : 0));
+        out.set("entries", mapper.valueToTree(new ArrayList<>(dev.consoleLog)));
+        return out;
+    }
+
+    public synchronized ObjectNode clearConsole(String id) {
+        Device dev = requireDevice(id);
+        int count = dev.consoleLog.size();
+        dev.consoleLog.clear();
+        addEvent(dev, "admin", "Console buffer cleared (" + count + " entries)");
+        ObjectNode out = mapper.createObjectNode();
+        out.put("ok", true);
+        out.put("cleared", count);
+        return out;
+    }
+
     private ObjectNode summary(Device dev) {
         ObjectNode n = mapper.createObjectNode();
         n.put("id", dev.id);
@@ -907,7 +1004,7 @@ public class RemoteStateService {
         }
     }
 
-    private enum RequestType {CONTROL, DATA, CONFIG}
+    private enum RequestType {CONTROL, DATA, CONFIG, WIREGUARD, CONSOLE}
 
     private static final class RemoteRequest {
         final String id;
@@ -931,6 +1028,10 @@ public class RemoteStateService {
                 response.set("commands", payload.get("commands"));
             } else if (type == RequestType.CONFIG) {
                 response.setAll(payload);
+            } else if (type == RequestType.WIREGUARD) {
+                response.setAll(payload);
+            } else if (type == RequestType.CONSOLE) {
+                response.put("command", payload.path("command").asText(""));
             }
             return response;
         }
@@ -956,6 +1057,7 @@ public class RemoteStateService {
         final Deque<RemoteRequest> queue = new ArrayDeque<>();
         final Deque<ObjectNode> ackHistory = new ArrayDeque<>();
         final Deque<ObjectNode> events = new ArrayDeque<>();
+        final Deque<ObjectNode> consoleLog = new ArrayDeque<>();
         RemoteRequest inflight;
 
         Device(String id) {

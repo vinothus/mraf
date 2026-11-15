@@ -10,8 +10,8 @@ const outDir = process.env.MRAF_VIDEO_DIR || '/tmp/mraf-server-demo/raw';
 
 const LOGIN_CSS = `
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-background:radial-gradient(1200px 700px at 20% 0%,#dceaff 0%,#eef5ff 45%,#f7fbff 100%);
-font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#172438}
+ background:radial-gradient(1200px 700px at 20% 0%,#dceaff 0%,#eef5ff 45%,#f7fbff 100%);
+ font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans Tamil",sans-serif;color:#172438}
 .card{width:470px;background:#ffffff;border:1px solid #d4deeb;border-radius:20px;padding:38px 42px;
 box-shadow:0 30px 80px rgba(23,36,56,.18)}
 .brand{display:flex;align-items:center;gap:14px;margin-bottom:8px}
@@ -31,14 +31,14 @@ font-size:15px;font-weight:800;cursor:pointer}button:focus{outline:3px solid #e8
 const LOGIN_HTML = `
 <!doctype html><html><head><meta charset="utf-8"><style>${LOGIN_CSS}</style></head><body>
 <div class="card">
-  <div class="brand"><div class="mark">M</div><div><h1>MRAF Remote</h1><p>Multi-device ESP32 fleet &middot; CoAP &middot; Spring Boot + H2</p></div></div>
+  <div class="brand"><div class="mark">நீ</div><div><h1>நீர்காவலன் Neer Kaavalan</h1><p>நுண் வேளாண்மை Precision Agriculture</p></div></div>
   <div class="role">%ROLE%</div>
   <form>
     <label for="u">Username</label><input id="u" autocomplete="username">
     <label for="p">Password</label><input id="p" type="password" autocomplete="current-password">
     <button id="go" type="button">Sign in</button>
   </form>
-  <div class="hint">HTTP Basic authentication &middot; server dashboard<br>%HINT%</div>
+  <div class="hint">நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center<br>HTTP Basic authentication &middot; server dashboard<br>%HINT%</div>
 </div></body></html>
 `;
 
@@ -233,6 +233,34 @@ const LOGIN_HTML = `
   await pause(2000);
   await page.locator('#save-config-rec').scrollIntoViewIfNeeded();
   await page.click('#save-config-rec');
+  await pause(2600);
+
+  await caption('Tunnel: the server provisions a WireGuard peer for each confirmed device');
+  await page.click('[data-tab="link"]');
+  await pause(2200);
+  await page.mouse.move(560, 430, { steps: 20 });
+  await pause(2400);
+  const provision = page.locator('#wg-provision');
+  if (await provision.count()) {
+    await provision.click();
+    await pause(2400);
+  }
+  await caption('The rendered client config is queued and pushed to the device on its next poll');
+  await page.mouse.move(760, 520, { steps: 20 });
+  await pause(2600);
+
+  await caption('Assistant: the same offline grammar the ESP32 runs, mirrored on the server');
+  await page.click('[data-tab="chat"]');
+  await pause(1800);
+  await page.click('[data-chat-quick="turn on relay 1"]');
+  await pause(2600);
+  await page.click('[data-chat-quick="boost pump 30 min"]');
+  await pause(2400);
+  await page.locator('#chat-input').click();
+  await page.locator('#chat-input').pressSequentially('status', { delay: 80 });
+  await pause(500);
+  await page.locator('#chat-form button[type="submit"]').click();
+  await caption('Commands are queued over CoAP and acknowledged by the controller');
   await pause(2600);
 
   await caption('Activity: every queued request, poll and acknowledgement');

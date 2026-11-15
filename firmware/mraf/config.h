@@ -1,4 +1,4 @@
-// MRAF Farm Controller - build-time configuration and pin map
+// Neer Kaavalan (நீர்காவலன்) - build-time configuration and pin map
 // Target board: ESP32 DevKit V1 38-pin (ESP32-WROOM-32), Arduino-ESP32 core.
 //
 // IMPORTANT: this design deliberately uses only off-the-shelf modules.
@@ -74,7 +74,7 @@ static const bool MAINS_SENSE_ACTIVE_HIGH = true;
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
-static const char *DEFAULT_DEVICE_NAME = "MRAF Farm Controller";
+static const char *DEFAULT_DEVICE_NAME = "Neer Kaavalan";
 static const char *DEFAULT_TIMEZONE = "IST-5:30";   // POSIX TZ for UTC+05:30
 static const char *DEFAULT_AUTH_USER = "admin";
 static const char *DEFAULT_AUTH_PASS = "farm1234";

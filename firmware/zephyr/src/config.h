@@ -1,4 +1,4 @@
-// MRAF Farm Controller - build-time configuration and pin map
+// Neer Kaavalan (நீர்காவலன்) - build-time configuration and pin map
 // Target board: ESP32 DevKit V1 38-pin (ESP32-WROOM-32), Arduino-ESP32 core.
 //
 // IMPORTANT: this design deliberately uses only off-the-shelf modules.
@@ -74,7 +74,7 @@ static const bool MAINS_SENSE_ACTIVE_HIGH = true;
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
-static const char *DEFAULT_DEVICE_NAME = "MRAF Farm Controller";
+static const char *DEFAULT_DEVICE_NAME = "Neer Kaavalan";
 static const char *DEFAULT_TIMEZONE = "IST-5:30";   // POSIX TZ for UTC+05:30
 static const char *DEFAULT_AUTH_USER = "admin";
 static const char *DEFAULT_AUTH_PASS = "farm1234";
@@ -90,6 +90,18 @@ static const char *DEFAULT_REMOTE_PASS = "farm1234";
 static const uint16_t DEFAULT_COAP_PORT = 5683;
 static const char *DEFAULT_COAP_PATH = "/mraf";
 static const uint16_t DEFAULT_COAP_INTERVAL_SEC = 60;
+
+// WireGuard overlay defaults. The server overrides every field with the peer
+// configuration it queues over CoAP.
+static const char *DEFAULT_WG_INTERFACE = "wg0";
+static const uint16_t DEFAULT_WG_KEEPALIVE = 25;
+
+// WebRTC peer-to-peer defaults. When enabled the dashboard reads live data
+// straight from the device over an encrypted data channel; the server only
+// relays the handshake (SDP/ICE) and runs the STUN server. The signalling
+// poll interval matches the simulator's 400 ms so the offer/answer exchange
+// completes before the browser gives up.
+static const uint16_t DEFAULT_WEBRTC_POLL_MS = 400;
 
 // Momentary relay pulse used by motor/contactor equipment. A motor starter
 // coil is normally driven by a momentary START/STOP push, so the relay is

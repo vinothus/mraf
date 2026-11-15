@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MRAF Remote Server</title>
+<title>நீர்காவலன் Neer Kaavalan – நுண் வேளாண்மை கட்டுப்பாட்டு மையம்</title>
 <script>
 (() => {
   let theme = null;
@@ -20,8 +20,8 @@
 <body>
 <header class="topbar">
   <div class="brand">
-    <div class="mark">M</div>
-    <div><h1>MRAF Remote</h1><p>Multi-device ESP32 fleet · CoAP link · Spring Boot + H2</p></div>
+    <div class="mark">நீ</div>
+    <div><h1>நீர்காவலன் Neer Kaavalan</h1><p>நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center</p></div>
   </div>
   <div class="top-actions">
     <span id="role-pill" class="pill">...</span>
@@ -34,19 +34,70 @@
 
 <main>
   <section id="admin-view" hidden>
-    <div class="stats">
-      <div class="card stat"><div class="k">Devices</div><div class="v" id="adm-total">--</div><div class="s">registered controllers</div></div>
-      <div class="card stat"><div class="k">Confirmed</div><div class="v" id="adm-confirmed">--</div><div class="s">approved by admin</div></div>
-      <div class="card stat"><div class="k">Online</div><div class="v" id="adm-online">--</div><div class="s">polled in last 90 s</div></div>
-      <div class="card stat"><div class="k">Pending</div><div class="v" id="adm-pending">--</div><div class="s">waiting for confirmation</div></div>
+    <nav class="tabs" id="admin-tabs">
+      <button class="tab active" data-admin-tab="fleet" type="button">Fleet</button>
+      <button class="tab" data-admin-tab="console" type="button">Console</button>
+      <button class="tab" data-admin-tab="live" type="button">Live links</button>
+    </nav>
+
+    <div id="admin-fleet">
+      <div class="stats">
+        <div class="card stat"><div class="k">Devices</div><div class="v" id="adm-total">--</div><div class="s">registered controllers</div></div>
+        <div class="card stat"><div class="k">Confirmed</div><div class="v" id="adm-confirmed">--</div><div class="s">approved by admin</div></div>
+        <div class="card stat"><div class="k">Online</div><div class="v" id="adm-online">--</div><div class="s">polled in last 90 s</div></div>
+        <div class="card stat"><div class="k">Pending</div><div class="v" id="adm-pending">--</div><div class="s">waiting for confirmation</div></div>
+      </div>
+
+      <div class="toolbar">
+        <div><h2>Fleet</h2><p class="hint">New ESP32s register themselves. Confirm one to unlock its dashboard and device login.</p></div>
+        <button id="adm-refresh" class="btn ghost" type="button">Reload</button>
+      </div>
+      <div id="device-grid" class="device-grid"></div>
+      <p id="fleet-empty" class="hint" hidden>No controllers have polled yet. Power on an ESP32 pointed at this server.</p>
     </div>
 
-    <div class="toolbar">
-      <div><h2>Fleet</h2><p class="hint">New ESP32s register themselves. Confirm one to unlock its dashboard and device login.</p></div>
-      <button id="adm-refresh" class="btn ghost" type="button">Reload</button>
+    <div id="admin-console" hidden>
+      <div class="toolbar">
+        <div><h2>Zephyr console</h2><p class="hint">Pick a connected controller, then run commands on its on-device Zephyr shell. Output returns on the controller's next poll.</p></div>
+      </div>
+      <div class="console-layout">
+        <aside class="card console-devices">
+          <h3>Connected controllers</h3>
+          <div id="console-device-list" class="console-device-list"></div>
+        </aside>
+        <article class="card console-main">
+          <div class="console-head">
+            <div><span class="eyebrow" id="console-dev-id">no controller selected</span><h2 id="console-dev-name">Zephyr console</h2></div>
+            <div class="device-flags">
+              <span id="console-link" class="pill offline">disconnected</span>
+              <span id="console-pending" class="pill">0 pending</span>
+            </div>
+            <button id="console-clear" class="btn ghost" type="button">Clear</button>
+          </div>
+          <div id="console-term" class="term"><span class="term-hint">Select a controller to open its console.</span></div>
+          <form id="console-form" class="console-form">
+            <span class="prompt">uart:~$</span>
+            <input id="console-input" type="text" placeholder="type a command, e.g. mraf status" autocomplete="off" spellcheck="false">
+            <button class="btn primary" type="submit">Send</button>
+          </form>
+        </article>
+      </div>
     </div>
-    <div id="device-grid" class="device-grid"></div>
-    <p id="fleet-empty" class="hint" hidden>No controllers have polled yet. Power on an ESP32 pointed at this server.</p>
+
+    <div id="admin-live" hidden>
+      <div class="toolbar">
+        <div><h2>Live peer-to-peer links</h2><p class="hint">WebRTC sessions negotiated through this server. It relays only the SDP/ICE handshake and reads the state each peer reports — the dashboard data itself never reaches the server.</p></div>
+        <button id="live-refresh" class="btn ghost" type="button">Reload</button>
+      </div>
+      <div class="stats">
+        <div class="card stat"><div class="k">Sessions</div><div class="v" id="live-count">--</div><div class="s">tracked links</div></div>
+        <div class="card stat"><div class="k">Connected</div><div class="v" id="live-connected">--</div><div class="s">data channel open</div></div>
+        <div class="card stat"><div class="k">STUN port</div><div class="v" id="live-stun">--</div><div class="s">UDP binding</div></div>
+        <div class="card stat"><div class="k">Session TTL</div><div class="v" id="live-ttl">--</div><div class="s">seconds idle</div></div>
+      </div>
+      <div id="live-grid" class="device-grid"></div>
+      <p id="live-empty" class="hint" hidden>No live sessions yet. Enable WebRTC in a controller's settings and open its dashboard.</p>
+    </div>
   </section>
 
   <section id="device-view" hidden>
@@ -72,6 +123,8 @@
       <button class="tab active" data-tab="dash" type="button">Dashboard</button>
       <button class="tab" data-tab="sched" type="button">Schedules</button>
       <button class="tab" data-tab="rec" type="button">Recurring</button>
+      <button class="tab" data-tab="link" type="button">Tunnel</button>
+      <button class="tab" data-tab="chat" type="button">Assistant</button>
       <button class="tab" data-tab="activity" type="button">Activity</button>
     </nav>
 
@@ -163,6 +216,55 @@
         <article class="card"><h3>Acknowledgements</h3><div id="acks" class="log"></div></article>
         <article class="card"><h3>Server events</h3><div id="events" class="log"></div></article>
       </div>
+    </section>
+
+    <section id="tab-link" class="tab-page" hidden>
+      <div class="toolbar">
+        <div><h2>WireGuard overlay</h2><p class="hint">Encrypted UDP tunnel so the controller is reachable over the internet, not just the LAN.</p></div>
+        <div class="btnrow">
+          <button id="wg-provision" class="btn accent" type="button">Provision peer</button>
+          <button id="wg-apply" class="btn" type="button">Apply to kernel</button>
+          <button id="wg-refresh" class="btn ghost" type="button">Refresh</button>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="card stat"><div class="k">Interface</div><div class="v" id="wg-iface">--</div><div class="s" id="wg-subnet">--</div></div>
+        <div class="card stat"><div class="k">Server address</div><div class="v" id="wg-server">--</div><div class="s" id="wg-port">UDP --</div></div>
+        <div class="card stat"><div class="k">Peers</div><div class="v" id="wg-peers">--</div><div class="s" id="wg-online">-- online</div></div>
+        <div class="card stat"><div class="k">Kernel</div><div class="v" id="wg-kernel">--</div><div class="s" id="wg-kernel-sub">--</div></div>
+      </div>
+      <div class="split">
+        <article class="card">
+          <h3>Server public key</h3>
+          <div class="mono" id="wg-pubkey">--</div>
+          <h3>This device's tunnel</h3>
+          <pre class="mono cfg" id="wg-client-cfg">Provision a peer to render this device's config.</pre>
+        </article>
+        <article class="card"><h3>Peers</h3><div id="wg-peer-list" class="log"></div></article>
+      </div>
+    </section>
+
+    <section id="tab-chat" class="tab-page" hidden>
+      <div class="toolbar">
+        <div><h2>Assistant</h2><p class="hint">Deterministic grammar — identical on the ESP32 and the server. No cloud, no model.</p></div>
+        <button id="chat-clear" class="btn ghost" type="button">Clear</button>
+      </div>
+      <article class="card chat-card">
+        <div id="chat-log" class="chat-log"></div>
+        <div class="chat-quick">
+          <button class="btn small" data-chat-quick="status" type="button">status</button>
+          <button class="btn small" data-chat-quick="turn on relay 1" type="button">relay 1 on</button>
+          <button class="btn small" data-chat-quick="turn off relay 1" type="button">relay 1 off</button>
+          <button class="btn small" data-chat-quick="pulse relay 2 for 800 ms" type="button">pulse relay 2</button>
+          <button class="btn small" data-chat-quick="pump off" type="button">pump off</button>
+          <button class="btn small" data-chat-quick="boost pump 30 min" type="button">boost pump</button>
+          <button class="btn small" data-chat-quick="all auto" type="button">all auto</button>
+        </div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" type="text" placeholder="e.g. turn on relay 3" autocomplete="off">
+          <button class="btn primary" type="submit">Send</button>
+        </form>
+      </article>
     </section>
   </section>
 

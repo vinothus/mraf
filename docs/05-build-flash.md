@@ -5,6 +5,12 @@
 > in [../okf/zephyr-port.md](../okf/zephyr-port.md). The Arduino instructions
 > below remain valid for the reference implementation.
 
+> Host toolchain installation for Linux and Windows (Zephyr SDK, west,
+> esptool, Arduino CLI, USB access): [15-toolchain-setup.md](15-toolchain-setup.md).
+
+> To burn the Zephyr ESP32 image from an Android phone over USB OTG (no PC),
+> use [14-android-flash.md](14-android-flash.md): one `zephyr.bin` at `0x1000`.
+
 ## Arduino toolchain
 
 Tested with:

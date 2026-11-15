@@ -93,6 +93,34 @@ struct RecurringSchedule {
     uint8_t action;                     // ScheduleAction
 };
 
+// WireGuard overlay identity pushed by the server over CoAP. The device keeps
+// the tunnel configuration in NVS so it can bring the interface up after a
+// reboot without waiting for the next poll.
+struct WireGuardConfig {
+    bool enabled;                       // tunnel wanted by the server
+    bool configured;                    // a valid config has been received
+    char interface[16];
+    char address[40];                   // overlay address, e.g. 10.66.66.2/32
+    char private_key[48];               // base64 Curve25519 private key
+    char dns[40];
+    char peer_public_key[48];
+    char peer_endpoint[64];             // host:port
+    char peer_allowed_ips[40];
+    char peer_preshared_key[48];
+    uint16_t persistent_keepalive;
+};
+
+// Peer-to-peer link settings. The device keeps the control-plane URL and an
+// optional explicit STUN URL in NVS so it can resume the handshake after a
+// reboot without waiting for the next server poll. The STUN URL is normally
+// discovered from GET <server>/api/webrtc/config and only cached here.
+struct WebRtcConfig {
+    bool enabled;                       // peer link wanted by the operator
+    char server[64];                    // control-plane base URL, e.g. http://10.0.0.5:8085
+    char stun[64];                      // explicit STUN override, e.g. stun:1.2.3.4:3478
+    uint16_t poll_ms;                   // signalling poll interval
+};
+
 struct Config {
     char device_name[40];
     char timezone[16];
@@ -115,6 +143,9 @@ struct Config {
     char remote_user[20];               // credentials for the remote server
     char remote_pass[32];
     bool remote_register;               // ask the server to register us
+
+    WireGuardConfig wireguard;
+    WebRtcConfig webrtc;
 
     ChannelConfig channels[MAX_CHANNELS];
     PumpConfig pump;

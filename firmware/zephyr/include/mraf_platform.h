@@ -10,6 +10,7 @@
 #include <ArduinoJson.h>
 
 struct Config;
+struct WireGuardConfig;
 
 void mraf_platform_init(void);
 void mraf_platform_start_network(const Config &cfg);
@@ -33,6 +34,31 @@ void mraf_platform_rtc_write(time_t t);
 
 void mraf_platform_led(bool on);
 void mraf_platform_restart(void);
+
+// Bring the WireGuard overlay up (or tear it down) from a server-supplied
+// configuration. Returns true when the tunnel was applied to the network
+// stack, false when WireGuard support is not compiled in.
+bool mraf_platform_wireguard_apply(const WireGuardConfig &cfg);
+bool mraf_platform_wireguard_active(void);
+
+// WebRTC data-channel transport. Signalling and command dispatch live in
+// webrtc.cpp; only the DTLS/SCTP transport is platform specific.
+//
+// The browser is the offerer, so mraf_platform_webrtc_start() takes the remote
+// SDP offer and must return the local answer SDP (with ICE candidates already
+// gathered into it). The rx callback is invoked for every complete JSON
+// message that arrives on the data channel.
+typedef void (*mraf_webrtc_rx_cb)(const char *message);
+
+bool mraf_platform_webrtc_available(void);
+bool mraf_platform_webrtc_start(const char *offer_sdp, char *answer_sdp,
+                                size_t answer_cap);
+void mraf_platform_webrtc_stop(void);
+bool mraf_platform_webrtc_open(void);
+int mraf_platform_webrtc_send(const char *message);
+char *mraf_platform_webrtc_tx_begin(size_t *cap);
+int mraf_platform_webrtc_tx_end(size_t len);
+void mraf_platform_webrtc_set_rx(mraf_webrtc_rx_cb cb);
 
 bool mraf_platform_mains_present(void);
 bool mraf_platform_read_tank_full(bool active_low);

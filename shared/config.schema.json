@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/mraf/config.schema.json",
-  "title": "MRAF Farm Controller configuration",
+  "title": "Neer Kaavalan configuration",
   "description": "Configuration accepted by POST /api/config on the ESP32 firmware and the native simulator.",
   "type": "object",
   "required": ["device", "wifi", "channels", "pump", "safety"],
@@ -37,6 +37,34 @@
         "path": {"type": "string", "maxLength": 31, "pattern": "^/", "default": "/mraf"},
         "interval_sec": {"type": "integer", "minimum": 10, "maximum": 3600, "default": 30},
         "token": {"type": "string", "maxLength": 47, "description": "Write-only shared token; omitted from GET responses."}
+      }
+    },
+    "wireguard": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "WireGuard overlay applied when the server sends a WIREGUARD CoAP request. Key material is write-only.",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "interface": {"type": "string", "maxLength": 15, "default": "wg0"},
+        "address": {"type": "string", "maxLength": 31, "description": "Device overlay address, e.g. 10.66.66.2/32"},
+        "dns": {"type": "string", "maxLength": 63},
+        "private_key": {"type": "string", "maxLength": 63, "description": "Write-only Curve25519 private key; omitted from GET responses."},
+        "peer_public_key": {"type": "string", "maxLength": 63},
+        "peer_endpoint": {"type": "string", "maxLength": 63, "description": "Server endpoint host:port"},
+        "peer_allowed_ips": {"type": "string", "maxLength": 63, "description": "Comma-separated CIDRs routed through the tunnel"},
+        "peer_preshared_key": {"type": "string", "maxLength": 63, "description": "Write-only optional preshared key; omitted from GET responses."},
+        "persistent_keepalive": {"type": "integer", "minimum": 0, "maximum": 3600, "default": 25}
+      }
+    },
+    "webrtc": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Peer-to-peer data channel served directly by the device. The browser reads its settings from GET /api/webrtc on the device; the Spring Boot server only relays the SDP/ICE handshake and runs the STUN server.",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "server": {"type": "string", "maxLength": 63, "description": "Control-plane base URL, e.g. http://10.0.0.5:8085"},
+        "stun": {"type": "string", "maxLength": 63, "description": "Optional STUN URL override, e.g. stun:10.0.0.5:3478. Discovered from the server when empty."},
+        "poll_ms": {"type": "integer", "minimum": 100, "maximum": 5000, "default": 400}
       }
     },
     "channels": {

@@ -16,13 +16,14 @@
 #include "mraf_state.h"
 #include "remote.h"
 #include "settings.h"
+#include "webrtc.h"
 
 static void ensureDeviceId(void)
 {
     if (g_cfg.device_id[0] != '\0') {
         return;
     }
-#if defined(CONFIG_ARCH_POSIX)
+#if defined(CONFIG_ARCH_POSIX) || !defined(CONFIG_HWINFO)
     snprintf(g_cfg.device_id, sizeof(g_cfg.device_id), "SIM-%08X",
              sys_rand32_get());
 #else
@@ -80,6 +81,7 @@ int main(void)
     mraf_tick_reset();
 
     mraf_remote_init();
+    mraf_webrtc_init();
     k_mutex_lock(&g_state_lock, K_FOREVER);
     g_ctrl.addEvent("system", "boot", mraf_now());
     k_mutex_unlock(&g_state_lock);
@@ -88,6 +90,7 @@ int main(void)
     mraf_api_init();
     mraf_api_start();
     mraf_remote_start();
+    mraf_webrtc_start();
 
     printk("MRAF %s on %s, HTTP port %d, device %s\n", FW_VERSION,
            mraf_platform_name(), mraf_api_port(), g_cfg.device_id);

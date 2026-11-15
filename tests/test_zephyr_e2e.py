@@ -121,7 +121,7 @@ class ZephyrE2ETests(unittest.TestCase):
         status, payload, headers = request("/")
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers.get("Content-Type", ""))
-        self.assertIn(b"<title>MRAF Controller", payload)
+        self.assertIn("<title>நீர்காவலன்".encode("utf-8"), payload)
         self.assertIn(b'id="theme-toggle"', payload)
         self.assertIn(b'html[data-theme="light"]', payload)
 
@@ -259,6 +259,55 @@ class ZephyrE2ETests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertIn("error", doc)
+
+    def test_12_chat_grammar(self):
+        status, doc = request_json(
+            "/api/chat", method="POST", body={"text": "turn on relay 3"})
+        self.assertEqual(status, 200)
+        self.assertEqual(doc["action"], "control")
+        self.assertEqual(doc["target"], "relay")
+        self.assertEqual(doc["relay_id"], 3)
+        self.assertTrue(doc["applied"])
+
+        status, doc = request_json(
+            "/api/chat", method="POST", body={"text": "relay 99 off"})
+        self.assertEqual(status, 200)
+        self.assertEqual(doc["action"], "unknown")
+        self.assertFalse(doc["understood"])
+
+    def test_13_wireguard_status(self):
+        status, doc = request_json("/api/wireguard")
+        self.assertEqual(status, 200)
+        self.assertIn("configured", doc)
+        self.assertIn("active", doc)
+        self.assertIn("interface", doc)
+
+        status, doc = request_json("/api/status")
+        self.assertIn("wireguard", doc["remote"])
+
+    def test_14_mcp(self):
+        status, doc = request_json(
+            "/mcp", method="POST",
+            body={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        self.assertEqual(status, 200)
+        names = [t["name"] for t in doc["result"]["tools"]]
+        self.assertIn("get_status", names)
+        self.assertIn("chat", names)
+
+        status, doc = request_json(
+            "/mcp", method="POST",
+            body={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                  "params": {"name": "control_relay",
+                             "arguments": {"relay_id": 2, "mode": "on"}}})
+        self.assertEqual(status, 200)
+        self.assertFalse(doc["result"]["isError"])
+
+    def test_15_mcp_notification(self):
+        status, payload, _ = request(
+            "/mcp", method="POST",
+            body={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.assertEqual(status, 202)
+        self.assertEqual(payload, b"")
 
 
 if __name__ == "__main__":

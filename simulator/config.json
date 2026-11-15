@@ -1,6 +1,6 @@
 {
   "device": {
-    "name": "MRAF Farm Controller",
+    "name": "Neer Kaavalan",
     "timezone": "IST-5:30",
     "auth_user": "admin",
     "auth_pass": "farm1234",
@@ -55,6 +55,12 @@
     "dry_run_grace_sec": 20,
     "tank_full_active_low": true,
     "sump_dry_active_low": true
+  },
+  "webrtc": {
+    "enabled": false,
+    "server": "",
+    "stun": "",
+    "poll_ms": 400
   },
   "safety": {
     "max_boost_min": 180

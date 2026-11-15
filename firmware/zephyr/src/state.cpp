@@ -12,6 +12,7 @@
 #include "mraf_platform.h"
 #include "remote.h"
 #include "settings.h"
+#include "webrtc.h"
 
 Config g_cfg;
 Controller g_ctrl;
@@ -215,6 +216,9 @@ void mraf_build_status(JsonDocument &doc)
 
     JsonObject rem = doc["remote"].to<JsonObject>();
     mraf_remote_build_status(rem);
+
+    JsonObject wrtc = doc["webrtc"].to<JsonObject>();
+    mraf_webrtc_build_status(wrtc);
 
     doc["profile"] = profileName(g_cfg.profile);
 

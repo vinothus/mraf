@@ -38,17 +38,25 @@ zephyr_compile_definitions(
 set(MRAF_SOURCES
   src/api.cpp
   src/coap_client.cpp
+  src/console.cpp
   src/controller.cpp
+  src/intent.cpp
   src/main.cpp
+  src/mcp.cpp
   src/remote.cpp
   src/settings.cpp
   src/state.cpp
+  src/webrtc.cpp
 )
 
-if(CONFIG_ARCH_POSIX)
+if(CONFIG_MRAF_PLATFORM_NATIVE)
   list(APPEND MRAF_SOURCES src/platform_native.cpp)
 else()
   list(APPEND MRAF_SOURCES src/platform_esp32.cpp)
+endif()
+
+if(CONFIG_MRAF_WEBRTC)
+  list(APPEND MRAF_SOURCES src/webrtc_peer.cpp)
 endif()
 
 target_sources(app PRIVATE ${MRAF_SOURCES})

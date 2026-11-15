@@ -9,6 +9,7 @@
 
 #include "coap_client.h"
 #include "config.h"
+#include "console.h"
 #include "mraf_compat.h"
 #include "mraf_platform.h"
 #include "mraf_state.h"
@@ -16,6 +17,8 @@
 
 static char g_remoteAckId[33];
 static char g_remoteAckResult[24];
+static char g_remoteConsole[1024];
+static char g_remoteLastConsole[1024];
 static bool g_remoteWantData;
 static char g_remoteLastId[33];
 static char g_remoteLastResult[24];
@@ -43,12 +46,23 @@ static void setRemoteAck(const char *id, const char *result)
 {
     copyRemoteText(g_remoteAckId, sizeof(g_remoteAckId), id);
     copyRemoteText(g_remoteAckResult, sizeof(g_remoteAckResult), result);
+    g_remoteConsole[0] = '\0';
+}
+
+static void setRemoteAckWithConsole(const char *id, const char *result,
+                                    const char *consoleText)
+{
+    copyRemoteText(g_remoteAckId, sizeof(g_remoteAckId), id);
+    copyRemoteText(g_remoteAckResult, sizeof(g_remoteAckResult), result);
+    copyRemoteText(g_remoteConsole, sizeof(g_remoteConsole), consoleText);
 }
 
 void mraf_remote_init(void)
 {
     g_remoteAckId[0] = '\0';
     g_remoteAckResult[0] = '\0';
+    g_remoteConsole[0] = '\0';
+    g_remoteLastConsole[0] = '\0';
     g_remoteLastId[0] = '\0';
     g_remoteLastResult[0] = '\0';
     g_remoteLastError[0] = '\0';
@@ -91,6 +105,14 @@ void mraf_remote_build_status(JsonObject rem)
     rem["confirmed"] = g_remoteConfirmed;
     rem["device_id"] = g_cfg.device_id;
     rem["user"] = g_cfg.remote_user;
+
+    JsonObject wg = rem["wireguard"].to<JsonObject>();
+    wg["enabled"] = g_cfg.wireguard.enabled;
+    wg["configured"] = g_cfg.wireguard.configured;
+    wg["active"] = mraf_platform_wireguard_active();
+    wg["interface"] = g_cfg.wireguard.interface;
+    wg["address"] = g_cfg.wireguard.address;
+    wg["endpoint"] = g_cfg.wireguard.peer_endpoint;
 }
 
 static void applyRemoteMeta(JsonObject res, time_t now)
@@ -151,8 +173,8 @@ static void remotePoll(void)
         copyRemoteText(g_remoteStatus, sizeof(g_remoteStatus), "waiting");
     }
 
-    static char body[8192];
-    static char resp[8192];
+    static char body[3072];
+    static char resp[5120];
 
     JsonDocument req;
     req["device"] = g_cfg.device_name;
@@ -170,6 +192,9 @@ static void remotePoll(void)
     if (g_remoteAckId[0]) {
         req["ack"] = g_remoteAckId;
         req["result"] = g_remoteAckResult;
+        if (g_remoteConsole[0]) {
+            req["console"] = g_remoteConsole;
+        }
     }
     if (g_remoteWantData) {
         JsonObject data = req["data"].to<JsonObject>();
@@ -199,6 +224,7 @@ static void remotePoll(void)
 
     g_remoteAckId[0] = '\0';
     g_remoteAckResult[0] = '\0';
+    g_remoteConsole[0] = '\0';
     g_remoteWantData = false;
 
     if (!resp[0]) {
@@ -308,6 +334,66 @@ static void remotePoll(void)
             copyRemoteText(g_remoteLastResult, sizeof(g_remoteLastResult), result);
         }
         setRemoteAck(id, result);
+    } else if (strcmp(rq, "console") == 0) {
+        if (id[0] && strcmp(id, g_remoteLastId) == 0) {
+            setRemoteAckWithConsole(id, g_remoteLastResult, g_remoteLastConsole);
+            return;
+        }
+
+        const char *command = res["command"] | "";
+        size_t n = mraf_console_run(command, g_remoteLastConsole,
+                                    sizeof(g_remoteLastConsole));
+        (void)n;
+        g_ctrl.addEvent("console", command, now);
+        const char *result = "ok";
+        if (id[0]) {
+            copyRemoteText(g_remoteLastId, sizeof(g_remoteLastId), id);
+            copyRemoteText(g_remoteLastResult, sizeof(g_remoteLastResult), result);
+        }
+        setRemoteAckWithConsole(id, result, g_remoteLastConsole);
+    } else if (strcmp(rq, "wireguard") == 0) {
+        if (id[0] && strcmp(id, g_remoteLastId) == 0) {
+            setRemoteAck(id, g_remoteLastResult);
+            return;
+        }
+
+        WireGuardConfig &w = g_cfg.wireguard;
+        copyRemoteText(w.interface, sizeof(w.interface),
+                       res["interface"] | DEFAULT_WG_INTERFACE);
+        copyRemoteText(w.address, sizeof(w.address), res["address"] | "");
+        copyRemoteText(w.private_key, sizeof(w.private_key), res["private_key"] | "");
+        copyRemoteText(w.dns, sizeof(w.dns), res["dns"] | "");
+        JsonObject peer = res["peer"].as<JsonObject>();
+        if (peer) {
+            copyRemoteText(w.peer_public_key, sizeof(w.peer_public_key),
+                           peer["public_key"] | "");
+            copyRemoteText(w.peer_endpoint, sizeof(w.peer_endpoint),
+                           peer["endpoint"] | "");
+            copyRemoteText(w.peer_allowed_ips, sizeof(w.peer_allowed_ips),
+                           peer["allowed_ips"] | "");
+            copyRemoteText(w.peer_preshared_key, sizeof(w.peer_preshared_key),
+                           peer["preshared_key"] | "");
+            int keepalive = peer["persistent_keepalive"] | DEFAULT_WG_KEEPALIVE;
+            w.persistent_keepalive = (uint16_t)(keepalive < 0 ? 0 : keepalive);
+        }
+        w.enabled = true;
+        w.configured = w.address[0] && w.private_key[0] && w.peer_public_key[0];
+
+        const char *result = "rejected";
+        if (w.configured) {
+            mraf_platform_wireguard_apply(w);
+            settingsSave(g_cfg);
+            g_ctrl.addEvent("remote", "WireGuard config applied", now);
+            result = "applied";
+        } else {
+            copyRemoteText(g_remoteLastError, sizeof(g_remoteLastError),
+                           "incomplete WireGuard config");
+        }
+        if (id[0]) {
+            copyRemoteText(g_remoteLastId, sizeof(g_remoteLastId), id);
+            copyRemoteText(g_remoteLastResult, sizeof(g_remoteLastResult), result);
+        }
+        setRemoteAck(id, result);
     } else if (strcmp(rq, "none") != 0 && rq[0]) {
         copyRemoteText(g_remoteLastError, sizeof(g_remoteLastError),
                        "unknown remote request");
@@ -339,7 +425,7 @@ static void remoteThread(void *, void *, void *)
     }
 }
 
-K_THREAD_STACK_DEFINE(g_remote_stack, 6144);
+K_THREAD_STACK_DEFINE(g_remote_stack, 4096);
 static struct k_thread g_remote_thread;
 
 void mraf_remote_start(void)

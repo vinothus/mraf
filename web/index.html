@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MRAF Controller</title>
+<title>நீர்காவலன் Neer Kaavalan – நுண் வேளாண்மை கட்டுப்பாட்டு மையம்</title>
 <script>
 (() => {
   let theme = null;
@@ -32,7 +32,7 @@ html[data-theme="light"]{
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--txt);
-  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,"Noto Sans Tamil",sans-serif}
 html{-webkit-text-size-adjust:100%}
 body{padding-bottom:40px}
 header{position:sticky;top:0;z-index:20;display:flex;align-items:center;
@@ -219,10 +219,11 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
 </head>
 <body>
 <header>
-  <div class="brand">MRAF <span id="brand-sub">Controller</span></div>
+  <div class="brand">நீர்காவலன் <span id="brand-sub">நுண் வேளாண்மை</span></div>
   <div class="hdr-right">
     <button id="theme-toggle" class="action" type="button" aria-label="Switch to light theme">Light theme</button>
     <span id="conn" class="pill">connecting...</span>
+    <span id="p2p-pill" class="pill" hidden>P2P</span>
     <span id="profile-pill" class="pill">agri</span>
     <span id="clock" class="pill">--:--</span>
   </div>
@@ -233,6 +234,9 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
   <button data-tab="sched">Daily schedules</button>
   <button data-tab="rec">Recurring</button>
   <button data-tab="settings">Settings</button>
+  <button data-tab="tunnel">Tunnel</button>
+  <button data-tab="live">Live P2P</button>
+  <button data-tab="chat">Assistant</button>
   <button data-tab="events">Events</button>
 </nav>
 
@@ -361,7 +365,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <div class="field"><label>SSID</label><input id="set-ssid" class="wide" list="ssid-list"><datalist id="ssid-list"></datalist></div>
         <div class="field"><label>New password (blank = unchanged)</label><input id="set-wifipass" type="password" class="wide" placeholder="unchanged"></div>
         <div class="btnrow"><button class="action" id="scan-wifi">Scan Wi-Fi</button></div>
-        <div class="hint">Changing Wi-Fi, hostname or login reboots the controller. With no Wi-Fi it starts an access point: MRAF-xxxxxx / farm1234.</div>
+        <div class="hint">Changing Wi-Fi, hostname or login reboots the controller. With no Wi-Fi it starts an access point: NeerKaavalan-xxxxxx / farm1234.</div>
       </div>
       <div class="card">
         <h3>Remote server (open CoAP)</h3>
@@ -375,6 +379,13 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <div class="field"><label>Server login password (blank = unchanged)</label><input id="set-remote-pass" type="password" class="wide" placeholder="unchanged"></div>
         <div class="field"><label class="row"><input type="checkbox" id="set-register"> Request registration / admin confirmation</label></div>
         <div class="hint">The ESP32 always calls out to the server. The server never connects in. Until an admin confirms the device, the server returns “waiting for confirmation”.</div>
+      </div>
+      <div class="card">
+        <h3>Live peer-to-peer (WebRTC)</h3>
+        <div class="field"><label class="row"><input type="checkbox" id="set-webrtc-enabled"> Enable WebRTC data channel</label></div>
+        <div class="field"><label>Control plane URL (STUN + signalling)</label><input id="set-webrtc-server" class="wide" placeholder="http://192.168.1.50:8085"></div>
+        <div class="field"><label>STUN URL override (optional)</label><input id="set-webrtc-stun" class="wide" placeholder="stun:192.168.1.50:3478"></div>
+        <div class="hint">The browser opens an encrypted data channel straight to the controller and pulls the dashboard over it. The server only relays SDP/ICE and is notified of the link state; it cannot read the traffic. Falls back to HTTP when off.</div>
       </div>
       <div class="card">
         <h3>Pump protection</h3>
@@ -396,6 +407,48 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <hr style="border-color:var(--line);margin:16px 0">
         <div class="btnrow"><button class="action danger" id="reboot">Reboot controller</button></div>
       </div>
+    </div>
+  </section>
+
+  <section id="tab-tunnel" hidden>
+    <div class="toolbar"><h2>WireGuard tunnel</h2><div class="spacer"></div><button class="action" id="refresh-tunnel">Refresh</button></div>
+    <div class="hint" style="margin-bottom:12px">Remote overlay managed by the server. The device applies the tunnel when it receives a WireGuard configuration while polling.</div>
+    <div id="tunnel-body" class="hint">Loading...</div>
+  </section>
+
+  <section id="tab-live" hidden>
+    <div class="toolbar"><h2>Live peer-to-peer (WebRTC)</h2><div class="spacer"></div>
+      <button class="action" id="webrtc-reconnect">Reconnect</button>
+      <button class="action danger" id="webrtc-stop">Disconnect</button>
+    </div>
+    <div class="hint" style="margin-bottom:12px">When enabled, the dashboard data is fetched directly from the controller over an encrypted WebRTC data channel. The server only relays the handshake and is told the link is up — it never sees the data.</div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px">
+      <div class="card stat"><div class="k">State</div><div class="v" id="wrtc-state" style="font-size:16px">off</div><div class="s" id="wrtc-state-sub">peer connection</div></div>
+      <div class="card stat"><div class="k">Data source</div><div class="v" id="wrtc-source" style="font-size:16px">HTTP</div><div class="s">dashboard transport</div></div>
+      <div class="card stat"><div class="k">Round trip</div><div class="v" id="wrtc-rtt" style="font-size:16px">--</div><div class="s">data channel ping</div></div>
+      <div class="card stat"><div class="k">Transferred</div><div class="v" id="wrtc-bytes" style="font-size:16px">0 B</div><div class="s">rx / tx on the channel</div></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Signalling &amp; ICE</h3><span class="pill" id="wrtc-transport">datachannel</span></div>
+      <div class="kv" style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px">
+        <span class="hint">Controller</span><span id="wrtc-device">--</span>
+        <span class="hint">Control plane</span><span id="wrtc-server">--</span>
+        <span class="hint">STUN</span><span id="wrtc-stun">--</span>
+        <span class="hint">ICE candidate</span><span id="wrtc-ice">--</span>
+      </div>
+    </div>
+    <div class="hint" style="margin-top:12px" id="wrtc-log">Waiting for the controller to offer a peer connection.</div>
+  </section>
+
+  <section id="tab-chat" hidden>
+    <div class="toolbar"><h2>Assistant</h2><div class="spacer"></div><span class="hint">Grammar-based, runs offline on the device</span></div>
+    <div class="card">
+      <div id="chat-log" style="display:flex;flex-direction:column;gap:8px;min-height:140px;max-height:52vh;overflow:auto"></div>
+      <form id="chat-form" style="display:flex;gap:8px;margin-top:12px">
+        <input id="chat-input" class="wide" style="flex:1" placeholder="e.g. turn on relay 3" autocomplete="off">
+        <button class="action primary" type="submit">Send</button>
+      </form>
+      <div class="hint" style="margin-top:8px">Try: 'relay 5 off', 'pulse relay 2 for 800 ms', 'pump on', 'boost pump 30 min', 'all auto', 'status'.</div>
     </div>
   </section>
 
@@ -426,6 +479,7 @@ let config = null;
 let schedulesRendered = false;
 let recurringRendered = false;
 let lastEvents = [];
+let chatMessages = [];
 
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
@@ -467,8 +521,8 @@ function toast(msg, ms=3200){
   toast._t = setTimeout(()=>t.classList.remove("show"), ms);
 }
 
-async function api(path, opts={}){
-  const res = await fetch(path, {
+async function fetchJson(url, opts={}){
+  const res = await fetch(url, {
     cache: "no-store",
     ...opts,
     headers: {"Content-Type":"application/json", ...(opts.headers||{})}
@@ -481,13 +535,201 @@ async function api(path, opts={}){
   }
   return data;
 }
+
+async function api(path, opts={}){
+  if(webrtc.connected && DC_PATHS.has(path.split("?")[0])){
+    try { return await webrtcCall(path, opts); }
+    catch(e){ if(e.message === "webrtc timeout") toast("WebRTC slow — using HTTP"); }
+  }
+  return fetchJson(path, opts);
+}
 async function post(path, body){ return api(path, {method:"POST", body: JSON.stringify(body)}); }
+
+/* ---------------- WebRTC live peer-to-peer ---------------- */
+const DC_PATHS = new Set(["/api/status","/api/config","/api/events","/api/wireguard",
+  "/api/control","/api/chat","/api/time","/api/pump/reset"]);
+const webrtc = {
+  enabled:false, server:"", token:"", deviceId:"", ice:[], stun:"", pollMs:400,
+  pc:null, dc:null, state:"off", iceState:"", seq:0, since:0, pending:new Map(),
+  rx:0, tx:0, rtt:null, connected:false, pollTimer:null
+};
+
+function wrtcLog(msg){ const el=$("#wrtc-log"); if(el) el.textContent = msg; }
+function fmtBytes(n){ n=Number(n||0); if(n<1024) return n+" B";
+  if(n<1048576) return (n/1024).toFixed(1)+" KB"; return (n/1048576).toFixed(2)+" MB"; }
+
+async function webrtcInit(){
+  try{
+    const info = await fetchJson("/api/webrtc");
+    webrtc.enabled = !!info.enabled;
+    webrtc.server = (info.server||"").replace(/\/$/,"");
+    webrtc.token = info.token||"";
+    webrtc.deviceId = info.device_id||"";
+    webrtc.pollMs = info.poll_ms||400;
+    webrtc.stun = (info.stun||"").trim();
+    webrtcRender();
+    if(webrtc.enabled && webrtc.server) webrtcStart();
+    else wrtcLog(webrtc.enabled ? "Set a control-plane URL and save to connect."
+                                : "WebRTC is off — the dashboard uses HTTP.");
+  }catch(e){ wrtcLog("WebRTC config: " + e.message); }
+}
+
+async function webrtcStart(){
+  if(webrtc.pc) return;
+  try{
+    const cfg = await fetchJson(webrtc.server + "/api/webrtc/config?device_id=" +
+      encodeURIComponent(webrtc.deviceId));
+    webrtc.ice = cfg.iceServers || [];
+    if(cfg.stun && cfg.stun.url) webrtc.stun = cfg.stun.url;
+    webrtc.pollMs = (cfg.signaling && cfg.signaling.pollMs) || webrtc.pollMs || 400;
+    const pc = new RTCPeerConnection({iceServers: webrtc.ice});
+    webrtc.pc = pc;
+    pc.onicecandidate = (ev)=>{ if(ev.candidate) webrtcSignal("candidate",
+      {candidate: ev.candidate.candidate, sdpMid: ev.candidate.sdpMid,
+       sdpMLineIndex: ev.candidate.sdpMLineIndex}); };
+    pc.oniceconnectionstatechange = ()=>{ webrtc.iceState = pc.iceConnectionState; webrtcRender(); };
+    pc.onconnectionstatechange = ()=>{
+      webrtc.state = pc.connectionState;
+      webrtc.connected = pc.connectionState === "connected";
+      webrtcRender(); webrtcReport();
+    };
+    const dc = pc.createDataChannel("mraf", {ordered:true});
+    webrtc.dc = dc;
+    dc.onopen = ()=>{ webrtc.connected=true; webrtc.state="connected";
+      wrtcLog("Data channel open — dashboard is now served peer-to-peer.");
+      webrtcRender(); webrtcReport(); webrtcPing(); loadStatus(); };
+    dc.onclose = ()=>{ webrtc.connected=false; webrtcRender(); };
+    dc.onmessage = (ev)=>{ webrtcOnMessage(ev.data); };
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const posted = await webrtcSignal("offer", {sdp: offer.sdp});
+    if(posted && posted.seq) webrtc.since = posted.seq;
+    webrtcPollLoop();
+    wrtcLog("Offer posted to the controller through the server registry...");
+    webrtcRender();
+  }catch(e){ wrtcLog("Connect failed: " + e.message); }
+}
+
+async function webrtcSignal(type, payload){
+  try{
+    return await fetchJson(webrtc.server + "/api/webrtc/signal", {method:"POST",
+      headers: {"X-Mraf-Token": webrtc.token},
+      body: JSON.stringify({device_id: webrtc.deviceId, from:"browser", type, ...payload})});
+  }catch(e){ return null; }
+}
+
+async function webrtcReport(){
+  if(!webrtc.server) return;
+  try{
+    await fetchJson(webrtc.server + "/api/webrtc/report", {method:"POST",
+      headers: {"X-Mraf-Token": webrtc.token},
+      body: JSON.stringify({device_id: webrtc.deviceId, role:"browser", state: webrtc.state,
+        transport:"datachannel", rx_bytes: webrtc.rx, tx_bytes: webrtc.tx,
+        ice: webrtc.iceState, rtt_ms: webrtc.rtt})});
+  }catch(e){}
+}
+
+async function webrtcPollLoop(){
+  if(!webrtc.pc) return;
+  try{
+    const data = await fetchJson(webrtc.server + "/api/webrtc/signal?device_id=" +
+      encodeURIComponent(webrtc.deviceId) + "&role=browser&since=" + webrtc.since,
+      {headers: {"X-Mraf-Token": webrtc.token}});
+    for(const sig of (data.signals||[])){
+      webrtc.since = Math.max(webrtc.since, sig.seq||0);
+      if(sig.type === "answer" && webrtc.pc.signalingState === "have-local-offer"){
+        await webrtc.pc.setRemoteDescription({type:"answer", sdp: sig.sdp});
+        wrtcLog("Answer received — negotiating ICE candidates...");
+      } else if(sig.type === "candidate" && sig.candidate){
+        try{ await webrtc.pc.addIceCandidate({candidate: sig.candidate,
+          sdpMid: sig.sdpMid, sdpMLineIndex: sig.sdpMLineIndex}); }catch(_){}
+      }
+    }
+  }catch(e){}
+  webrtc.pollTimer = setTimeout(webrtcPollLoop, webrtc.pollMs||400);
+}
+
+function webrtcOnMessage(raw){
+  webrtc.rx += (raw||"").length;
+  let msg; try{ msg = JSON.parse(raw); }catch(e){ return; }
+  if(msg.id && webrtc.pending.has(msg.id)){
+    const p = webrtc.pending.get(msg.id); webrtc.pending.delete(msg.id);
+    if(msg.ok) p.resolve(msg.data); else p.reject(new Error(msg.error||"webrtc error"));
+  }
+}
+
+function webrtcSend(cmd, extra={}){
+  return new Promise((resolve, reject)=>{
+    if(!webrtc.connected || !webrtc.dc || webrtc.dc.readyState !== "open"){
+      reject(new Error("webrtc not connected")); return;
+    }
+    const id = ++webrtc.seq;
+    const payload = JSON.stringify({id, cmd, ...extra});
+    webrtc.tx += payload.length;
+    webrtc.pending.set(id, {resolve, reject});
+    setTimeout(()=>{ if(webrtc.pending.has(id)){ webrtc.pending.delete(id);
+      reject(new Error("webrtc timeout")); } }, 6000);
+    try{ webrtc.dc.send(payload); }
+    catch(e){ webrtc.pending.delete(id); reject(e); }
+  });
+}
+
+async function webrtcCall(path, opts){
+  const p = path.split("?")[0];
+  const body = opts && opts.body ? JSON.parse(opts.body) : {};
+  if(p === "/api/status") return webrtcSend("status");
+  if(p === "/api/config"){
+    if(opts && opts.body) return webrtcSend("config", {body});
+    return webrtcSend("config");
+  }
+  if(p === "/api/events") return webrtcSend("events");
+  if(p === "/api/wireguard") return webrtcSend("wireguard");
+  if(p === "/api/control") return webrtcSend("control", {body});
+  if(p === "/api/chat") return webrtcSend("chat", {text: body.text});
+  if(p === "/api/time") return webrtcSend("time", {epoch: body.epoch});
+  if(p === "/api/pump/reset") return webrtcSend("pump-reset");
+  throw new Error("not a peer command");
+}
+
+async function webrtcPing(){
+  if(!webrtc.connected) return;
+  const t = performance.now();
+  try{ await webrtcSend("ping", {t}); webrtc.rtt = Math.round(performance.now()-t); }
+  catch(e){}
+  webrtcRender();
+}
+
+function webrtcStop(){
+  if(webrtc.pollTimer){ clearTimeout(webrtc.pollTimer); webrtc.pollTimer=null; }
+  if(webrtc.dc){ try{ webrtc.dc.close(); }catch(_){} webrtc.dc=null; }
+  if(webrtc.pc){ try{ webrtc.pc.close(); }catch(_){} webrtc.pc=null; }
+  webrtc.connected=false; webrtc.state="closed"; webrtc.pending.clear();
+  webrtcSignal("bye", {});
+  webrtcRender(); wrtcLog("Disconnected. Dashboard falls back to HTTP.");
+}
+
+function webrtcRender(){
+  const set=(id,v)=>{ const el=$(id); if(el) el.textContent=v; };
+  set("#wrtc-state", webrtc.state||"off");
+  set("#wrtc-source", webrtc.connected ? "WebRTC P2P" : "HTTP");
+  set("#wrtc-rtt", webrtc.rtt!=null ? webrtc.rtt+" ms" : "--");
+  set("#wrtc-bytes", fmtBytes(webrtc.rx)+" / "+fmtBytes(webrtc.tx));
+  set("#wrtc-device", webrtc.deviceId||"--");
+  set("#wrtc-server", webrtc.server||"--");
+  set("#wrtc-stun", webrtc.stun||"--");
+  set("#wrtc-ice", webrtc.iceState||"--");
+  const pill=$("#p2p-pill");
+  if(pill){ pill.hidden = !webrtc.connected; }
+}
 
 function setTab(name){
   $$("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
-  ["dash","sched","rec","settings","events"].forEach(k => { $("#tab-"+k).hidden = (k !== name); });
+  ["dash","sched","rec","settings","tunnel","live","chat","events"].forEach(k => { $("#tab-"+k).hidden = (k !== name); });
   if(name === "sched" && !schedulesRendered) renderSchedules();
   if(name === "rec" && !recurringRendered) renderRecurring();
+  if(name === "tunnel") renderTunnel();
+  if(name === "live") webrtcRender();
+  if(name === "chat") renderChat();
 }
 
 /* ---------------- animated equipment icons ---------------- */
@@ -594,7 +836,7 @@ function renderDash(){
   const active = (status.relays||[]).filter(r=>r.on).length;
   const profile = (config && config.device && config.device.profile) || status.profile || "agri";
 
-  $("#brand-sub").textContent = (config && config.device && config.device.name) || "Controller";
+  $("#brand-sub").textContent = (config && config.device && config.device.name) || "நுண் வேளாண்மை";
   $("#profile-pill").textContent = profile;
   $("#profile-pill").className = "pill " + (profile === "agri" ? "ok" : "");
 
@@ -811,6 +1053,10 @@ function fillSettings(){
   $("#set-remote-user").value = co.user || "farm";
   $("#set-remote-pass").value = "";
   $("#set-register").checked = co.register !== false;
+  const wrc = config.webrtc || {};
+  $("#set-webrtc-enabled").checked = !!wrc.enabled;
+  $("#set-webrtc-server").value = wrc.server || "";
+  $("#set-webrtc-stun").value = wrc.stun || "";
 }
 
 function readDays(row){
@@ -877,7 +1123,7 @@ function buildConfig(){
 
   cfg.recurring = readRecurring();
 
-  cfg.device.name = $("#set-name").value.trim() || "MRAF Controller";
+  cfg.device.name = $("#set-name").value.trim() || "Neer Kaavalan";
   cfg.device.profile = $("#set-profile").value;
   cfg.device.timezone = $("#set-tz").value.trim() || "IST-5:30";
   cfg.device.auth_user = $("#set-user").value.trim() || "admin";
@@ -902,6 +1148,11 @@ function buildConfig(){
   const rp = $("#set-remote-pass").value;
   if(rp) cfg.coap.pass = rp;
 
+  cfg.webrtc = cfg.webrtc || {};
+  cfg.webrtc.enabled = $("#set-webrtc-enabled").checked;
+  cfg.webrtc.server = $("#set-webrtc-server").value.trim();
+  cfg.webrtc.stun = $("#set-webrtc-stun").value.trim();
+
   cfg.safety = cfg.safety || {};
   cfg.safety.max_boost_min = Number($("#set-maxboost").value) || 180;
   return cfg;
@@ -914,6 +1165,8 @@ async function saveConfig(){
     if(!recurringRendered) renderRecurring();
     const out = await post("/api/config", buildConfig());
     toast("Saved.");
+    webrtcStop();
+    setTimeout(webrtcInit, 400);
     schedulesRendered = false;
     recurringRendered = false;
     config = null;
@@ -970,6 +1223,56 @@ async function postSim(path, body){
   catch(e){ toast("Sim: " + e.message); }
 }
 
+function renderTunnel(){
+  const body = $("#tunnel-body");
+  if(!body) return;
+  const wg = status && status.remote && status.remote.wireguard;
+  if(!wg){ body.textContent = "No WireGuard information available."; return; }
+  const rows = [
+    ["Enabled", wg.enabled ? "yes" : "no"],
+    ["Configured", wg.configured ? "yes" : "no"],
+    ["Active", wg.active ? "yes" : "no"],
+    ["Interface", wg.interface || "-"],
+    ["Device address", wg.address || "-"],
+    ["Server endpoint", wg.endpoint || "-"],
+    ["Allowed IPs", wg.allowed_ips || "-"],
+    ["Keepalive", wg.persistent_keepalive != null ? wg.persistent_keepalive + " s" : "-"]
+  ];
+  body.innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">` +
+    rows.map(([k, v]) => `<div class="card stat"><div class="k">${esc(k)}</div><div class="v" style="font-size:16px">${esc(v)}</div></div>`).join("") +
+    `</div>`;
+}
+
+function renderChat(){
+  const log = $("#chat-log");
+  if(!log) return;
+  if(!chatMessages.length){
+    log.innerHTML = `<div class="hint">Ask the controller to switch equipment or report status.</div>`;
+    return;
+  }
+  log.innerHTML = chatMessages.map(m => {
+    const mine = m.role === "user";
+    return `<div style="align-self:${mine ? "flex-end" : "flex-start"};max-width:86%;padding:8px 12px;border-radius:12px;` +
+      `background:${mine ? "var(--accent)" : "var(--panel2)"};color:${mine ? "#08130e" : "var(--txt)"};white-space:pre-wrap">${esc(m.text)}</div>`;
+  }).join("");
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendChat(text){
+  if(!text) return;
+  chatMessages.push({role:"user", text});
+  renderChat();
+  try{
+    const d = await post("/api/chat", {text});
+    chatMessages.push({role:"bot", text: d.reply || "(no reply)"});
+    renderChat();
+    if(d.action === "control" || d.action === "data") loadStatus();
+  }catch(e){
+    chatMessages.push({role:"bot", text:"Error: " + e.message});
+    renderChat();
+  }
+}
+
 document.addEventListener("click", async (ev)=>{
   const tab = ev.target.closest("nav button");
   if(tab){ setTab(tab.dataset.tab); return; }
@@ -1005,10 +1308,13 @@ document.addEventListener("click", async (ev)=>{
     return;
   }
   if(ev.target.id === "refresh"){ loadStatus(); return; }
+  if(ev.target.id === "webrtc-reconnect"){ webrtcStop(); setTimeout(webrtcStart, 200); return; }
+  if(ev.target.id === "webrtc-stop"){ webrtcStop(); return; }
   if(ev.target.id === "refresh-events"){
     try{ const d = await api("/api/events"); renderEvents(d.events||[]); }catch(e){ toast(e.message); }
     return;
   }
+  if(ev.target.id === "refresh-tunnel"){ loadStatus().then(renderTunnel); return; }
   if(ev.target.id === "save-config" || ev.target.id === "save-settings" || ev.target.id === "save-rec"){ saveConfig(); return; }
   if(ev.target.id === "add-rec"){
     if(!config) return;
@@ -1106,10 +1412,19 @@ initTheme();
 $("#theme-toggle").addEventListener("click", ()=>{
   applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true);
 });
+$("#chat-form").addEventListener("submit", (ev)=>{
+  ev.preventDefault();
+  const box = $("#chat-input");
+  const v = (box.value || "").trim();
+  box.value = "";
+  sendChat(v);
+});
 setTab("dash");
-loadConfig().then(loadStatus);
+loadConfig().then(()=>{ loadStatus(); webrtcInit(); });
 setInterval(loadStatus, 2000);
 setInterval(()=>{ if(!$("#tab-events").hidden) loadStatus(); }, 5000);
+setInterval(()=>{ if(webrtc.connected) webrtcPing(); }, 3000);
+setInterval(()=>{ if(webrtc.connected) webrtcReport(); }, 5000);
 </script>
 </body>
 </html>

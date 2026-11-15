@@ -15,6 +15,8 @@
 
 #include "api.h"
 #include "config.h"
+#include "intent.h"
+#include "mcp.h"
 #include "mraf_compat.h"
 #include "mraf_platform.h"
 #include "mraf_state.h"
@@ -33,6 +35,10 @@ enum RouteId {
     R_EVENTS,
     R_SCAN,
     R_REBOOT,
+    R_WIREGUARD,
+    R_CHAT,
+    R_WEBRTC,
+    R_MCP,
 #if defined(CONFIG_MRAF_SIMULATOR)
     R_SIM_POWER,
     R_SIM_SENSORS,
@@ -107,6 +113,27 @@ static void sendError(int status, const char *msg, struct http_response_ctx *res
     sendJson(d, status, response);
 }
 
+static void copyField(char *dst, size_t n, const char *src)
+{
+    if (!dst || n == 0) {
+        return;
+    }
+    if (!src) {
+        src = "";
+    }
+    strncpy(dst, src, n - 1);
+    dst[n - 1] = '\0';
+}
+
+static bool headerIs(const char *name, const char *want)
+{
+    if (!name) {
+        return false;
+    }
+    size_t n = strlen(want);
+    return strncasecmp(name, want, n) == 0 && name[n] == '\0';
+}
+
 static bool evalAuth(const struct http_request_ctx *request, Route &route)
 {
     (void)route;
@@ -115,8 +142,7 @@ static bool evalAuth(const struct http_request_ctx *request, Route &route)
     }
     const char *auth = nullptr;
     for (size_t i = 0; i < request->header_count; i++) {
-        if (request->headers[i].name &&
-            strcasecmp(request->headers[i].name, "Authorization") == 0) {
+        if (headerIs(request->headers[i].name, "Authorization")) {
             auth = request->headers[i].value;
             break;
         }
@@ -158,6 +184,10 @@ static int h_config_get(Route &, const struct http_request_ctx *,
                         struct http_response_ctx *response);
 static int h_config_post(Route &, const struct http_request_ctx *,
                          struct http_response_ctx *response);
+static int h_wireguard_get(Route &, const struct http_request_ctx *,
+                           struct http_response_ctx *response);
+static int h_wireguard_post(Route &, const struct http_request_ctx *,
+                            struct http_response_ctx *response);
 
 static int route_cb(struct http_client_ctx *client, enum http_transaction_status status,
                     const struct http_request_ctx *request,
@@ -198,6 +228,14 @@ static int route_cb(struct http_client_ctx *client, enum http_transaction_status
                 h_config_get(route, request, response);
             } else if (client->method == HTTP_POST) {
                 h_config_post(route, request, response);
+            } else {
+                sendError(405, "method not allowed", response);
+            }
+        } else if (&route == &g_routes[R_WIREGUARD]) {
+            if (client->method == HTTP_GET) {
+                h_wireguard_get(route, request, response);
+            } else if (client->method == HTTP_POST) {
+                h_wireguard_post(route, request, response);
             } else {
                 sendError(405, "method not allowed", response);
             }
@@ -242,9 +280,104 @@ static int h_health(Route &, const struct http_request_ctx *, struct http_respon
     return 0;
 }
 
+// The browser reads its peer settings from the device (not the server): the
+// control-plane URL, the STUN URL and the shared signalling token. This is the
+// same document the simulator's webrtc_config() returns.
+static int h_webrtc(Route &, const struct http_request_ctx *,
+                    struct http_response_ctx *response)
+{
+    JsonDocument d;
+    k_mutex_lock(&g_state_lock, K_FOREVER);
+    d["enabled"] = g_cfg.webrtc.enabled;
+    d["server"] = g_cfg.webrtc.server;
+    d["stun"] = g_cfg.webrtc.stun;
+    d["poll_ms"] = g_cfg.webrtc.poll_ms;
+    d["device_id"] = g_cfg.device_id;
+    d["token"] = g_cfg.coap_token;
+    k_mutex_unlock(&g_state_lock);
+    d["transport"] = "datachannel";
+    sendJson(d, 200, response);
+    return 0;
+}
+
+static void wireguardToJson(JsonDocument &d)
+{
+    d["enabled"] = g_cfg.wireguard.enabled;
+    d["configured"] = g_cfg.wireguard.configured;
+    d["active"] = mraf_platform_wireguard_active();
+    d["interface"] = g_cfg.wireguard.interface;
+    d["address"] = g_cfg.wireguard.address;
+    d["endpoint"] = g_cfg.wireguard.peer_endpoint;
+    d["allowed_ips"] = g_cfg.wireguard.peer_allowed_ips;
+    d["persistent_keepalive"] = g_cfg.wireguard.persistent_keepalive;
+}
+
+static int h_wireguard_get(Route &, const struct http_request_ctx *,
+                           struct http_response_ctx *response)
+{
+    JsonDocument out;
+    k_mutex_lock(&g_state_lock, K_FOREVER);
+    wireguardToJson(out);
+    k_mutex_unlock(&g_state_lock);
+    sendJson(out, 200, response);
+    return 0;
+}
+
+static int h_wireguard_post(Route &route, const struct http_request_ctx *,
+                            struct http_response_ctx *response)
+{
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, route.buf, route.len);
+    if (err) {
+        sendError(400, err.c_str(), response);
+        return 0;
+    }
+
+    JsonDocument out;
+    k_mutex_lock(&g_state_lock, K_FOREVER);
+    WireGuardConfig &w = g_cfg.wireguard;
+    copyField(w.interface, sizeof(w.interface),
+              doc["interface"] | DEFAULT_WG_INTERFACE);
+    copyField(w.address, sizeof(w.address), doc["address"] | "");
+    copyField(w.private_key, sizeof(w.private_key), doc["private_key"] | "");
+    copyField(w.dns, sizeof(w.dns), doc["dns"] | "");
+    JsonObject peer = doc["peer"].as<JsonObject>();
+    if (peer) {
+        copyField(w.peer_public_key, sizeof(w.peer_public_key),
+                  peer["public_key"] | "");
+        copyField(w.peer_endpoint, sizeof(w.peer_endpoint),
+                  peer["endpoint"] | "");
+        copyField(w.peer_allowed_ips, sizeof(w.peer_allowed_ips),
+                  peer["allowed_ips"] | "");
+        copyField(w.peer_preshared_key, sizeof(w.peer_preshared_key),
+                  peer["preshared_key"] | "");
+        int keepalive = peer["persistent_keepalive"] | DEFAULT_WG_KEEPALIVE;
+        w.persistent_keepalive = (uint16_t)(keepalive < 0 ? 0 : keepalive);
+    }
+    w.enabled = true;
+    w.configured = w.address[0] && w.private_key[0] && w.peer_public_key[0];
+
+    bool applied = false;
+    if (w.configured) {
+        mraf_platform_wireguard_apply(w);
+        settingsSave(g_cfg);
+        g_ctrl.addEvent("remote", "WireGuard config applied", mraf_now());
+        applied = true;
+    }
+    wireguardToJson(out);
+    k_mutex_unlock(&g_state_lock);
+
+    out["ok"] = applied;
+    out["applied"] = applied;
+    if (!applied) {
+        out["error"] = "incomplete WireGuard config";
+    }
+    sendJson(out, applied ? 200 : 400, response);
+    return 0;
+}
+
 static int h_status(Route &, const struct http_request_ctx *, struct http_response_ctx *response)
 {
-    mraf_tick_catchup();
     JsonDocument d;
     k_mutex_lock(&g_state_lock, K_FOREVER);
     mraf_build_status(d);
@@ -418,6 +551,104 @@ static int h_reboot(Route &, const struct http_request_ctx *, struct http_respon
     d["reboot"] = true;
     sendJson(d, 200, response);
     k_work_reschedule(&g_reboot_work, K_MSEC(600));
+    return 0;
+}
+
+static void sendEmpty(int status, struct http_response_ctx *response)
+{
+    response->status = (enum http_status)status;
+    response->headers = g_hdr_json;
+    response->header_count = 2;
+    response->body = (const uint8_t *)"";
+    response->body_len = 0;
+    response->final_chunk = true;
+}
+
+static int h_chat(Route &route, const struct http_request_ctx *,
+                  struct http_response_ctx *response)
+{
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, route.buf, route.len);
+    if (err) {
+        sendError(400, err.c_str(), response);
+        return 0;
+    }
+    const char *text = doc["text"] | "";
+    if (text[0] == '\0') {
+        text = doc["message"] | "";
+    }
+
+    MrafIntent intent;
+    mraf_intent_parse(text, intent);
+
+    JsonDocument out;
+    JsonObject o = out.to<JsonObject>();
+    o["input"] = text;
+    o["action"] = intent.action;
+    o["target"] = intent.target;
+    o["relay_id"] = intent.relay_id;
+    o["mode"] = intent.mode;
+    if (intent.pulse_ms > 0) {
+        o["pulse_ms"] = intent.pulse_ms;
+    } else {
+        o["pulse_ms"] = nullptr;
+    }
+    if (intent.boost_min > 0) {
+        o["boost_min"] = intent.boost_min;
+    } else {
+        o["boost_min"] = nullptr;
+    }
+    o["understood"] = intent.understood;
+    o["reply"] = intent.reply;
+
+    if (strcmp(intent.action, "control") == 0) {
+        mraf_tick_catchup();
+        String error;
+        k_mutex_lock(&g_state_lock, K_FOREVER);
+        bool applied = mraf_intent_apply(intent, mraf_now(), error);
+        if (applied) {
+            g_cfg = g_ctrl.config();
+            settingsSave(g_cfg);
+        }
+        k_mutex_unlock(&g_state_lock);
+        o["applied"] = applied;
+        if (!applied) {
+            o["error"] = error.c_str();
+        }
+    } else if (strcmp(intent.action, "status") == 0 ||
+               strcmp(intent.action, "data") == 0) {
+        k_mutex_lock(&g_state_lock, K_FOREVER);
+        JsonDocument st;
+        mraf_build_status(st);
+        o["status"].set(st.as<JsonObject>());
+        k_mutex_unlock(&g_state_lock);
+    }
+    o["ok"] = true;
+    sendJson(out, 200, response);
+    return 0;
+}
+
+static int h_mcp(Route &route, const struct http_request_ctx *,
+                 struct http_response_ctx *response)
+{
+    JsonDocument req;
+    DeserializationError err = deserializeJson(req, route.buf, route.len);
+    if (err) {
+        JsonDocument e;
+        e["jsonrpc"] = "2.0";
+        e["id"] = nullptr;
+        JsonObject er = e["error"].to<JsonObject>();
+        er["code"] = -32700;
+        er["message"] = "parse error";
+        sendJson(e, 200, response);
+        return 0;
+    }
+    JsonDocument resp;
+    if (!mraf_mcp_handle(req, resp)) {
+        sendEmpty(202, response);
+        return 0;
+    }
+    sendJson(resp, 200, response);
     return 0;
 }
 
@@ -623,6 +854,32 @@ static struct http_resource_detail_dynamic d_reboot = {
     .cb = route_cb,
     .user_data = &g_routes[R_REBOOT],
 };
+static struct http_resource_detail_dynamic d_wireguard = {
+    .common = {.bitmask_of_supported_http_methods = BIT(HTTP_GET) | BIT(HTTP_POST),
+               .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+    .cb = route_cb,
+    .user_data = &g_routes[R_WIREGUARD],
+};
+static struct http_resource_detail_dynamic d_chat = {
+    .common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+               .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+    .cb = route_cb,
+    .user_data = &g_routes[R_CHAT],
+};
+static struct http_resource_detail_dynamic d_webrtc = {
+    .common = {.bitmask_of_supported_http_methods = BIT(HTTP_GET),
+               .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+    .cb = route_cb,
+    .user_data = &g_routes[R_WEBRTC],
+};
+#if defined(CONFIG_MRAF_MCP)
+static struct http_resource_detail_dynamic d_mcp = {
+    .common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+               .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+    .cb = route_cb,
+    .user_data = &g_routes[R_MCP],
+};
+#endif
 #if defined(CONFIG_MRAF_SIMULATOR)
 static struct http_resource_detail_dynamic d_sim_power = {
     .common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
@@ -679,6 +936,12 @@ HTTP_RESOURCE_DEFINE(res_time, mraf_http, "/api/time", &d_time);
 HTTP_RESOURCE_DEFINE(res_events, mraf_http, "/api/events", &d_events);
 HTTP_RESOURCE_DEFINE(res_scan, mraf_http, "/api/wifi/scan", &d_scan);
 HTTP_RESOURCE_DEFINE(res_reboot, mraf_http, "/api/reboot", &d_reboot);
+HTTP_RESOURCE_DEFINE(res_wireguard, mraf_http, "/api/wireguard", &d_wireguard);
+HTTP_RESOURCE_DEFINE(res_chat, mraf_http, "/api/chat", &d_chat);
+HTTP_RESOURCE_DEFINE(res_webrtc, mraf_http, "/api/webrtc", &d_webrtc);
+#if defined(CONFIG_MRAF_MCP)
+HTTP_RESOURCE_DEFINE(res_mcp, mraf_http, "/mcp", &d_mcp);
+#endif
 #if defined(CONFIG_MRAF_SIMULATOR)
 HTTP_RESOURCE_DEFINE(res_sim_power, mraf_http, "/api/sim/power", &d_sim_power);
 HTTP_RESOURCE_DEFINE(res_sim_sensors, mraf_http, "/api/sim/sensors", &d_sim_sensors);
@@ -714,6 +977,10 @@ void mraf_api_init(void)
     initRoute(R_EVENTS, h_events, g_buf_small, sizeof(g_buf_small), false);
     initRoute(R_SCAN, h_scan, g_buf_small, sizeof(g_buf_small), false);
     initRoute(R_REBOOT, h_reboot, g_buf_small, sizeof(g_buf_small), false);
+    initRoute(R_WIREGUARD, h_wireguard_post, g_buf_control, sizeof(g_buf_control), false);
+    initRoute(R_CHAT, h_chat, g_buf_control, sizeof(g_buf_control), false);
+    initRoute(R_WEBRTC, h_webrtc, g_buf_small, sizeof(g_buf_small), false);
+    initRoute(R_MCP, h_mcp, g_buf_config, sizeof(g_buf_config), false);
 #if defined(CONFIG_MRAF_SIMULATOR)
     initRoute(R_SIM_POWER, h_sim_power, g_buf_sim, sizeof(g_buf_sim), false);
     initRoute(R_SIM_SENSORS, h_sim_sensors, g_buf_sim, sizeof(g_buf_sim), false);

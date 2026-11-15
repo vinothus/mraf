@@ -175,6 +175,8 @@ class DemoController:
         self.data_request_id = None
         self.battery = 13.32
         self.polls = 0
+        self.wireguard = {}
+        self.started = time.time()
 
     def recurring_for(self, index):
         action = ""
@@ -257,6 +259,128 @@ class DemoController:
             return "rejected"
         return "applied"
 
+    def run_console(self, command):
+        """Emulate the on-device Zephyr shell for remote console access."""
+        line = (command or "").strip()
+        if not line:
+            return ""
+        argv = line.split()
+        cmd = argv[0]
+        if cmd in ("help", "?"):
+            return "\n".join([
+                "Please press the <Tab> button to see all available commands.",
+                "You can also use the <Tab> button to complete a command.",
+                "Available commands:",
+                "  clear       : Clear screen.",
+                "  device      : Device commands.",
+                "  help        : Prints the list of commands.",
+                "  kernel      : Kernel commands.",
+                "  mraf        : Neer Kaavalan controller commands.",
+                "  net         : Networking commands.",
+                "  threads     : List kernel threads.",
+                "  uptime      : Show system uptime.",
+                "  version     : Show version.",
+            ])
+        if cmd == "clear":
+            return ""
+        if cmd == "version":
+            return "Neer Kaavalan 1.1.0-demo (Zephyr 4.4.0)"
+        if cmd == "uptime":
+            return f"Uptime: {int(time.time() - self.started)} s"
+        if cmd == "threads":
+            return "\n".join([
+                "Name             Prio State  Stack",
+                "mraf_remote         7 running 6144",
+                "mraf_state          8 pending 4096",
+                "mraf_web            9 pending 8192",
+                "sysworkq           -1 pending 2048",
+                "idle                15 ready  1024",
+            ])
+        if cmd == "device":
+            sub = argv[1] if len(argv) > 1 else ""
+            if sub == "list":
+                return "\n".join([
+                    "devices:",
+                    "- uart@3f400000 (READY)",
+                    "- gpio@3ff44000 (READY)",
+                    "- adc@3ff48800 (READY)",
+                    "- wdt@3ff5a000 (READY)",
+                ])
+            return "device: subcommand 'list' not found"
+        if cmd == "net":
+            sub = argv[1] if len(argv) > 1 else ""
+            if sub == "iface":
+                lines = [
+                    "Interface 0x20001234 (wlan0)",
+                    "============================",
+                    "Link addr : 3C:71:BF:AA:01:42",
+                    "MTU       : 1500",
+                    "Oper state: UP",
+                    "IPv4 addr : 192.168.1.42/24",
+                ]
+                if self.wireguard:
+                    lines += [
+                        f"Interface {self.wireguard.get('interface', 'wg0')} (VPN)",
+                        "Oper state: UP",
+                        f"IPv4 addr : {self.wireguard.get('address', '')}",
+                    ]
+                return "\n".join(lines)
+            return "net: subcommand 'iface' not found"
+        if cmd == "kernel":
+            sub = " ".join(argv[1:])
+            if sub == "version":
+                return "Zephyr version 4.4.0"
+            return "kernel: subcommand 'version' not found"
+        if cmd == "mraf":
+            sub = argv[1] if len(argv) > 1 else "status"
+            if sub == "status":
+                self.refresh_auto()
+                on = sum(1 for r in self.relays if r)
+                return "\n".join([
+                    f"device_id : {self.device_id}",
+                    f"name      : Neer Kaavalan",
+                    f"profile   : {self.profile}",
+                    f"confirmed : {str(self.confirmed).lower()}",
+                    f"relays    : {on}/12 on",
+                    f"pump      : {'RUNNING' if self.pump_on else 'OFF'} "
+                    f"(mode {self.pump_cfg.get('mode', 'auto')})",
+                    f"coap      : {'enabled' if self.confirmed else 'pending'}",
+                ])
+            if sub == "relay":
+                if len(argv) < 4:
+                    return "usage: mraf relay <1-12> <on|off|auto>"
+                try:
+                    idx = int(argv[2]) - 1
+                except ValueError:
+                    return "invalid relay index"
+                if not 0 <= idx < 12:
+                    return "invalid relay index"
+                mode = argv[3]
+                if mode not in ("on", "off", "auto"):
+                    return "usage: mraf relay <1-12> <on|off|auto>"
+                self.apply_command({"target": "relay", "id": idx + 1, "mode": mode})
+                state = "on" if self.relays[idx] else "off"
+                return f"relay {idx + 1} -> {state} (mode {mode})"
+            if sub == "pump":
+                if len(argv) < 3:
+                    return "usage: mraf pump <on|off|auto>"
+                mode = argv[2]
+                if mode not in ("on", "off", "auto"):
+                    return "usage: mraf pump <on|off|auto>"
+                self.apply_command({"target": "pump", "mode": mode})
+                return f"pump -> {'on' if self.pump_on else 'off'} (mode {mode})"
+            if sub == "wg":
+                if not self.wireguard:
+                    return "wireguard: not configured"
+                return "\n".join([
+                    f"interface : {self.wireguard.get('interface', 'wg0')}",
+                    f"address   : {self.wireguard.get('address', '')}",
+                    f"endpoint  : {self.wireguard.get('endpoint', '')}",
+                    f"allowed   : {self.wireguard.get('allowed_ips', '')}",
+                ])
+            return f"mraf: unknown subcommand '{sub}'"
+        return f"Unknown command: {cmd}"
+
     def apply_config(self, body):
         profile = body.get("profile") or body.get("device", {}).get("profile")
         if profile:
@@ -323,7 +447,7 @@ class DemoController:
         self.polls += 1
         request = {
             "device_id": self.device_id,
-            "device": "MRAF Farm Controller",
+            "device": "Neer Kaavalan",
             "fw": "1.1.0-demo",
             "token": self.token,
             "time": int(time.time()),
@@ -339,6 +463,8 @@ class DemoController:
             request["result"] = ack["result"]
             if ack["result"] == "data":
                 request["data"] = self.snapshot()
+            if ack.get("console") is not None:
+                request["console"] = ack["console"]
 
         code, text = coap_post(self.host, self.port, "/mraf", json.dumps(request))
         if not 64 <= code < 96:
@@ -379,6 +505,26 @@ class DemoController:
             if rid:
                 self.ack_queue.append({"id": rid, "result": result})
             print(f"poll {self.polls}: config {rid} -> {result}")
+        elif kind == "console":
+            command = response.get("command", "")
+            output = self.run_console(command)
+            if rid:
+                self.ack_queue.append({"id": rid, "result": "ok", "console": output})
+            print(f"poll {self.polls}: console {rid} <- {command!r}")
+        elif kind == "wireguard":
+            peer = response.get("peer") or {}
+            self.wireguard = {
+                "interface": response.get("interface"),
+                "address": response.get("address"),
+                "endpoint": peer.get("endpoint"),
+                "allowed_ips": peer.get("allowed_ips"),
+                "public_key": peer.get("public_key"),
+            }
+            configured = bool(self.wireguard["address"] and peer.get("public_key"))
+            result = "applied" if configured else "rejected"
+            if rid:
+                self.ack_queue.append({"id": rid, "result": result})
+            print(f"poll {self.polls}: wireguard {rid} -> {result}")
         else:
             print(f"poll {self.polls}: none")
 

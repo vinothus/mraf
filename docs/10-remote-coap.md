@@ -1,8 +1,8 @@
 # 10 - Remote Java server over CoAP
 
 The controller polls a remote Java server over CoAP/UDP. It asks the server
-whether there is a control, data or configuration request, then reports the
-result on the next poll. The server also tells the controller whether it has
+whether there is a control, data, configuration or WireGuard request, then
+reports the result on the next poll. The server also tells the controller whether it has
 been confirmed by an administrator, which profile it should use and how often
 it should poll.
 
@@ -27,6 +27,7 @@ Open **Settings → Remote CoAP** in the ESP32 dashboard:
 | Poll interval | `60` | Seconds between polls, 10-3600 |
 | Shared token | empty | Optional token copied into every request |
 | Server user / password | empty | Login the server stores when the device registers |
+| Request registration | on | Ask an admin to confirm the device on first contact |
 
 The token is write-only in the REST API. A blank value in the form keeps the
 existing token. The token and server credentials are stored in NVS with the
@@ -34,6 +35,10 @@ rest of the configuration.
 
 CoAP settings apply without a reboot. Wi-Fi, hostname and login changes still
 reboot the controller.
+
+A walkthrough that configures the remote server on the device and brings up the
+WireGuard tunnel is at
+[demo/mraf-remote-tunnel-demo.mp4](demo/mraf-remote-tunnel-demo.mp4).
 
 ## Registration and confirmation
 
@@ -62,7 +67,7 @@ Every poll is a CoAP confirmable POST with a JSON body:
 ```json
 {
   "device_id": "MRAF-A1B2C3",
-  "device": "MRAF Farm Controller",
+  "device": "Neer Kaavalan",
   "fw": "1.1.0",
   "token": "shared-secret",
   "time": 1793503200,
@@ -220,6 +225,51 @@ Recurring schedules support `repeat` = `daily`, `weekly`, `monthly` or
 `from`/`to` in `HH:MM`, a `channel_mask` (bit 0 = relay 1) and `action` =
 `on`, `off` or `auto`. Off rules win over on rules. Up to 8 recurring schedules
 are accepted.
+
+### WireGuard request
+
+When the server provisions a WireGuard peer it queues a `wireguard` request. The
+controller stores the keys, address and peer, applies the tunnel (Zephyr native
+WireGuard) and acknowledges on the next poll:
+
+```json
+{"request": "wireguard", "id": "MRAF-A1B2C3-wg-5",
+ "interface": "wg0", "address": "10.66.66.2/32", "private_key": "...",
+ "dns": "",
+ "peer": {"public_key": "...", "endpoint": "vpn.example.net:51820",
+          "allowed_ips": "10.66.66.0/24", "persistent_keepalive": 25,
+          "preshared_key": ""}}
+```
+
+The controller marks the tunnel `configured` only when address, private key and
+peer public key are all present, then applies it and saves to NVS. The ACK is
+`{"ack": "MRAF-A1B2C3-wg-5", "result": "applied"}` (or `"rejected"` for an
+incomplete payload). A new `wireguard` request supersedes any queued one. The
+overlay address and peer are visible in `GET /api/status` under
+`remote.wireguard`.
+
+### Console request
+
+The dashboard's Console tab runs commands on the controller's on-device Zephyr
+shell. The server queues one command line at a time:
+
+```json
+{"request": "console", "id": "MRAF-A1B2C3-con-9", "command": "mraf status"}
+```
+
+The controller executes the command, remembers the id, and returns the captured
+output in the ACK on the next poll:
+
+```json
+{"ack": "MRAF-A1B2C3-con-9", "result": "ok",
+ "console": "device_id : MRAF-A1B2C3\nname      : Neer Kaavalan\n..."}
+```
+
+`result` is `ok` for a normal reply (including an unknown command, which returns
+`Unknown command: ...`). Duplicate ids are not re-run; the controller repeats the
+stored output. The server keeps the last 200 console entries per device and
+serves them from `GET /api/devices/{id}/console`. Commands that change outputs
+(`mraf relay`, `mraf pump`) go through the same safety rules as the dashboard.
 
 ## CoAP details
 

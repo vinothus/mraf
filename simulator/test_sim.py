@@ -17,6 +17,7 @@ from mraf_sim import (
     SimHandler,
     load_config,
     normalize_config,
+    parse_intent,
 )
 
 CONFIG = Path(__file__).resolve().parent / "config.json"
@@ -219,6 +220,91 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             normalize_config(bad)
 
+    def test_public_config_removes_wireguard_secrets(self):
+        app = make_app()
+        app.wireguard_configure({
+            "interface": "wg0",
+            "address": "10.66.66.2/32",
+            "private_key": "priv-secret",
+            "peer": {"public_key": "pub", "endpoint": "vpn:51820",
+                     "allowed_ips": "10.66.66.0/24", "preshared_key": "psk"},
+        })
+        wg = app.config_api()["wireguard"]
+        self.assertNotIn("private_key", wg)
+        self.assertNotIn("peer_preshared_key", wg)
+        self.assertTrue(wg["configured"])
+
+
+class WebRtcConfigTests(unittest.TestCase):
+    def test_defaults_present_and_disabled(self):
+        cfg = normalize_config(load_config(CONFIG))
+        wrc = cfg["webrtc"]
+        self.assertFalse(wrc["enabled"])
+        self.assertEqual(wrc["server"], "")
+        self.assertEqual(wrc["poll_ms"], 400)
+
+    def test_enable_roundtrip(self):
+        app = make_app()
+        app.set_config({"webrtc": {"enabled": True, "server": "http://server:8085"}})
+        self.assertTrue(app.cfg["webrtc"]["enabled"])
+        self.assertEqual(app.cfg["webrtc"]["server"], "http://server:8085")
+
+    def test_config_api_exposes_peer_params(self):
+        app = make_app()
+        app.set_config({"webrtc": {"enabled": True, "server": "http://server:8085"},
+                        "coap": {"token": "shared-secret"}})
+        info = app.webrtc_config()
+        self.assertTrue(info["enabled"])
+        self.assertEqual(info["server"], "http://server:8085")
+        self.assertEqual(info["token"], "shared-secret")
+        self.assertEqual(info["transport"], "datachannel")
+
+    def test_public_config_does_not_leak_token(self):
+        app = make_app()
+        app.set_config({"webrtc": {"enabled": True, "server": "http://server:8085"},
+                        "coap": {"token": "shared-secret"}})
+        wrc = app.config_api()["webrtc"]
+        self.assertNotIn("token", wrc)
+        self.assertTrue(wrc["enabled"])
+
+    def test_status_reports_peer_state(self):
+        app = make_app()
+        status = app.webrtc_status()
+        for key in ("enabled", "available", "state", "connected", "rx_bytes", "tx_bytes"):
+            self.assertIn(key, status)
+
+
+class IntentTests(unittest.TestCase):
+    def test_relay_on(self):
+        intent = parse_intent("turn on relay 3")
+        self.assertEqual((intent["action"], intent["target"], intent["relay_id"],
+                          intent["mode"]), ("control", "relay", 3, "on"))
+
+    def test_pulse(self):
+        intent = parse_intent("pulse relay 2 for 800 ms")
+        self.assertEqual((intent["target"], intent["relay_id"], intent["pulse_ms"]),
+                         ("relay", 2, 800))
+
+    def test_boost_default(self):
+        intent = parse_intent("boost the pump")
+        self.assertEqual((intent["target"], intent["mode"], intent["boost_min"]),
+                         ("pump", "auto", 30))
+
+    def test_all_on_becomes_auto(self):
+        intent = parse_intent("all on")
+        self.assertEqual((intent["target"], intent["mode"]), ("all", "auto"))
+
+    def test_status(self):
+        self.assertEqual(parse_intent("status")["action"], "status")
+
+    def test_unknown_relay(self):
+        intent = parse_intent("relay 99 off")
+        self.assertFalse(intent["understood"])
+        self.assertEqual(intent["action"], "unknown")
+
+    def test_help(self):
+        self.assertEqual(parse_intent("help")["action"], "help")
+
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
@@ -287,6 +373,50 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(r["sim"]["mains"])
         r = self.post("/api/sim/step", {"seconds": 60})
         self.assertIn("now", r)
+
+    def test_chat_endpoint(self):
+        r = self.post("/api/chat", {"text": "turn on relay 3"})
+        self.assertEqual(r["action"], "control")
+        self.assertTrue(r["applied"])
+        status = self.get("/api/status")
+        self.assertTrue(status["relays"][2]["on"])
+
+    def test_chat_status_embeds_snapshot(self):
+        r = self.post("/api/chat", {"text": "status"})
+        self.assertEqual(r["action"], "status")
+        self.assertIn("relays", r["status"])
+
+    def test_wireguard_endpoints(self):
+        before = self.get("/api/wireguard")
+        self.assertFalse(before["configured"])
+        r = self.post("/api/wireguard", {
+            "interface": "wg0", "address": "10.66.66.2/32", "private_key": "priv",
+            "peer": {"public_key": "pub", "endpoint": "vpn:51820",
+                     "allowed_ips": "10.66.66.0/24", "persistent_keepalive": 25},
+        })
+        self.assertEqual(r["result"], "applied")
+        self.assertTrue(r["wireguard"]["active"])
+        status = self.get("/api/status")
+        self.assertTrue(status["remote"]["wireguard"]["active"])
+
+    def test_mcp_tools_and_call(self):
+        listing = self.post("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        names = [t["name"] for t in listing["result"]["tools"]]
+        self.assertIn("control_relay", names)
+        self.assertIn("wireguard_status", names)
+        call = self.post("/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                  "params": {"name": "control_relay",
+                                             "arguments": {"relay_id": 2, "mode": "on"}}})
+        self.assertFalse(call["result"]["isError"])
+
+    def test_mcp_notification_returns_202(self):
+        data = json.dumps({"jsonrpc": "2.0",
+                           "method": "notifications/initialized"}).encode()
+        req = urllib.request.Request(self.base + "/mcp", data=data,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            self.assertEqual(r.status, 202)
+            self.assertEqual(r.read(), b"")
 
 
 if __name__ == "__main__":

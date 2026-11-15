@@ -8,8 +8,8 @@ const outDir = process.env.MRAF_VIDEO_DIR || '/tmp/mraf-esp32-demo/raw';
 
 const LOGIN_CSS = `
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-background:radial-gradient(1100px 650px at 18% 0%,#d9f4e6 0%,#eef8f2 50%,#f7fcf9 100%);
-font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#15251d}
+ background:radial-gradient(1100px 650px at 18% 0%,#d9f4e6 0%,#eef8f2 50%,#f7fcf9 100%);
+ font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans Tamil",sans-serif;color:#15251d}
 .card{width:470px;background:#ffffff;border:1px solid #d3e1d9;border-radius:20px;padding:38px 42px;
 box-shadow:0 30px 80px rgba(21,37,29,.16)}
 .brand{display:flex;align-items:center;gap:14px;margin-bottom:8px}
@@ -29,14 +29,14 @@ font-size:15px;font-weight:800;cursor:pointer}button:focus{outline:3px solid #19
 const LOGIN_HTML = `
 <!doctype html><html><head><meta charset="utf-8"><style>${LOGIN_CSS}</style></head><body>
 <div class="card">
-  <div class="brand"><div class="mark">M</div><div><h1>MRAF Controller</h1><p>ESP32 web server &middot; local dashboard</p></div></div>
+  <div class="brand"><div class="mark">நீ</div><div><h1>நீர்காவலன் Neer Kaavalan</h1><p>நுண் வேளாண்மை Precision Agriculture</p></div></div>
   <div class="role">ESP32 local login</div>
   <form>
     <label for="u">Username</label><input id="u" autocomplete="username">
     <label for="p">Password</label><input id="p" type="password" autocomplete="current-password">
     <button id="go" type="button">Sign in</button>
   </form>
-  <div class="hint">HTTP Basic authentication &middot; served by the device<br>admin / farm1234 &middot; native_sim build of the ESP32 firmware</div>
+  <div class="hint">நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center<br>HTTP Basic authentication &middot; served by the device<br>admin / farm1234 &middot; native_sim build of the ESP32 firmware</div>
 </div></body></html>
 `;
 
@@ -219,6 +219,32 @@ const LOGIN_HTML = `
   await pause(2400);
   await page.mouse.move(720, 500, { steps: 18 });
   await pause(2200);
+
+  await caption('WireGuard tunnel: overlay state pushed by the server on the next poll');
+  await page.click('nav button[data-tab="tunnel"]');
+  await pause(1000);
+  await page.mouse.move(720, 430, { steps: 20 });
+  await pause(2600);
+
+  await caption('Assistant: offline grammar chat, no language model on the device');
+  await page.click('nav button[data-tab="chat"]');
+  await pause(1000);
+  await page.locator('#chat-input').click();
+  await page.locator('#chat-input').pressSequentially('turn on relay 3', { delay: 70 });
+  await pause(700);
+  await page.locator('#chat-form button[type="submit"]').click();
+  await pause(2600);
+  await page.locator('#chat-input').click();
+  await page.locator('#chat-input').pressSequentially('boost pump 30 min', { delay: 70 });
+  await pause(600);
+  await page.locator('#chat-form button[type="submit"]').click();
+  await pause(2400);
+  await page.locator('#chat-input').click();
+  await page.locator('#chat-input').pressSequentially('status', { delay: 80 });
+  await pause(600);
+  await page.locator('#chat-form button[type="submit"]').click();
+  await caption('The same tools are exposed over MCP JSON-RPC at POST /mcp');
+  await pause(2800);
 
   await page.click('nav button[data-tab="dash"]');
   await pause(1400);

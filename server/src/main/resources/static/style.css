@@ -25,7 +25,7 @@ body {
     radial-gradient(900px 500px at -10% 10%, #102a3a 0%, transparent 55%),
     var(--bg);
   color: var(--text);
-  font: 15px/1.45 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font: 15px/1.45 "Inter", "Segoe UI", system-ui, -apple-system, "Noto Sans Tamil", sans-serif;
   min-height: 100vh;
 }
 
@@ -286,4 +286,82 @@ html[data-theme="light"] .toast.err { background: #fdecef; border-color: rgba(20
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+}
+
+/* ---------------------------------------------------------- tunnel & chat */
+.mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 0.78rem; }
+.cfg {
+  background: #0e1a2d; border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; margin-top: 10px; white-space: pre-wrap; word-break: break-all;
+  color: var(--cyan); max-height: 260px; overflow: auto;
+}
+#wg-pubkey { color: var(--cyan); word-break: break-all; margin-top: 6px; }
+
+.chat-card { display: flex; flex-direction: column; gap: 12px; }
+.chat-log {
+  display: flex; flex-direction: column; gap: 10px;
+  min-height: 260px; max-height: 440px; overflow: auto; padding: 4px;
+}
+.chat-msg {
+  max-width: 78%; padding: 10px 13px; border-radius: 14px; font-size: 0.86rem;
+  border: 1px solid var(--line); background: var(--card2);
+}
+.chat-msg .who { display: block; font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.chat-msg.user { align-self: flex-end; background: rgba(78, 168, 255, 0.14); border-color: rgba(78, 168, 255, 0.4); }
+.chat-msg.bot { align-self: flex-start; }
+.chat-msg.bot .reply { color: var(--text); }
+.chat-msg.bot .meta { margin-top: 6px; color: var(--muted); font-size: 0.72rem; }
+.chat-msg.bot .meta code { color: var(--cyan); }
+.chat-msg.err { border-color: rgba(255, 93, 108, 0.5); background: rgba(255, 93, 108, 0.1); }
+.chat-quick { display: flex; gap: 8px; flex-wrap: wrap; }
+.chat-form { display: flex; gap: 10px; }
+.chat-form input {
+  flex: 1; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: #0e1a2d; color: var(--text); font-size: 0.9rem;
+}
+.chat-form input:focus { outline: none; border-color: var(--blue); }
+
+/* ----------------------------------------------------------------- console */
+.console-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
+.console-devices h3 { margin-bottom: 10px; }
+.console-device-list { display: flex; flex-direction: column; gap: 8px; }
+.console-device {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--card2); color: var(--text); cursor: pointer; font: inherit;
+}
+.console-device:hover { border-color: #9db6d6; }
+.console-device.active { border-color: var(--cyan); background: rgba(56, 225, 208, 0.1); }
+.console-device .dot { flex: 0 0 auto; }
+.console-device .dot.on { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.console-device .cd-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.console-device .cd-text b { font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-device .cd-text small { font-size: 0.7rem; }
+
+.console-main { display: flex; flex-direction: column; gap: 12px; min-height: 420px; }
+.console-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.console-head > div:first-child { flex: 1; min-width: 160px; }
+.term {
+  flex: 1; min-height: 300px; max-height: 520px; overflow: auto;
+  background: #050b16; border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.8rem; line-height: 1.5;
+}
+.term-hint { color: var(--muted); }
+.term-entry { margin-bottom: 14px; }
+.term-cmd { color: var(--cyan); }
+.term-cmd .prompt, .console-form .prompt { color: var(--green); }
+.term-out { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--text); font: inherit; }
+.term-time { color: var(--muted); font-size: 0.66rem; margin-top: 4px; }
+.console-form { display: flex; align-items: center; gap: 10px; }
+.console-form .prompt { font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.console-form input {
+  flex: 1; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: #0e1a2d; color: var(--text); font-family: ui-monospace, monospace; font-size: 0.85rem;
+}
+.console-form input:focus { outline: none; border-color: var(--blue); }
+html[data-theme="light"] .term { background: #f2f6fc; }
+html[data-theme="light"] .console-form input { background: #f2f6fc; }
+@media (max-width: 900px) {
+  .console-layout { grid-template-columns: 1fr; }
 }

@@ -34,6 +34,11 @@ Status codes: `200` success, `400` bad request/validation, `401` auth required,
 | POST | `/api/pump/reset` | Clear a latched pump fault |
 | POST | `/api/time` | Set the system time and RTC |
 | GET | `/api/events` | Event log |
+| GET | `/api/wireguard` | WireGuard overlay state |
+| POST | `/api/wireguard` | Apply a server-style WireGuard config |
+| POST | `/api/chat` | Deterministic grammar chat |
+| GET | `/api/webrtc` | Peer-to-peer link settings for the browser (see [13-webrtc.md](13-webrtc.md)) |
+| POST | `/mcp` | MCP JSON-RPC 2.0 endpoint |
 | GET | `/api/wifi/scan` | Scan Wi-Fi networks |
 | POST | `/api/reboot` | Reboot the ESP32 |
 
@@ -66,7 +71,7 @@ The simulator adds `"simulator": true`.
 {
   "simulator": false,
   "fw": "1.0.0",
-  "device": "MRAF Farm Controller",
+  "device": "Neer Kaavalan",
   "now": 1793579400,
   "now_local": "2026-11-02 06:00:00",
   "time_valid": true,
@@ -93,7 +98,15 @@ The simulator adds `"simulator": true`.
     "status": "confirmed",
     "confirmed": true,
     "device_id": "ESP32-A1B2C3",
-    "user": "farm"
+    "user": "farm",
+    "wireguard": {
+      "enabled": true,
+      "configured": true,
+      "active": true,
+      "interface": "wg0",
+      "address": "10.66.66.2/32",
+      "endpoint": "vpn.example.net:51820"
+    }
   },
   "profile": "agri",
   "power": {
@@ -348,6 +361,68 @@ curl -u admin:farm1234 -X POST http://mraf.local/api/reboot
 ```
 
 Returns `{"ok": true, "reboot": true}` then restarts.
+
+## GET /api/wireguard
+
+Returns the overlay state:
+
+```json
+{"enabled":true,"configured":true,"active":true,"interface":"wg0",
+ "address":"10.66.66.2/32","endpoint":"vpn.example.net:51820",
+ "allowed_ips":"10.66.66.0/24","persistent_keepalive":25}
+```
+
+The same object is embedded in `/api/status` under `remote.wireguard`.
+
+## POST /api/wireguard
+
+Accepts the flat payload the server sends in a CoAP `wireguard` request and
+applies it. See [10-remote-coap.md](10-remote-coap.md) for the field list.
+
+## POST /api/chat
+
+Runs the on-device deterministic grammar (no language model):
+
+```bash
+curl -u admin:farm1234 -H 'Content-Type: application/json' \
+  -d '{"text":"turn on relay 3"}' http://mraf.local/api/chat
+```
+
+Actions are `help`, `status`, `data`, `control` and `unknown`. The `status`
+action embeds the full status document. The server mirrors the same grammar in
+`com.mraf.server.intent.IntentParser`.
+
+## GET /api/webrtc
+
+Returns the peer-to-peer link settings the browser needs to open a WebRTC data
+channel to this device directly:
+
+```bash
+curl -u admin:farm1234 http://mraf.local/api/webrtc
+```
+
+```json
+{
+  "enabled": true,
+  "server": "http://10.0.0.5:8085",
+  "stun": "stun:10.0.0.5:3478",
+  "poll_ms": 400,
+  "device_id": "ESP32-A1B2C3",
+  "token": "demo-token",
+  "transport": "datachannel"
+}
+```
+
+The `token` is the shared signalling token; the device exposes it here (over its
+own authenticated HTTP) so the browser can talk to the Spring Boot control
+plane. See [13-webrtc.md](13-webrtc.md).
+
+## POST /mcp
+
+MCP JSON-RPC 2.0 (Streamable HTTP, JSON response mode). Methods: `initialize`,
+`notifications/*` (HTTP 202), `ping`, `tools/list` and `tools/call`. Tools:
+`get_status`, `control_relay`, `control_pump`, `set_all`, `apply_config`,
+`wireguard_status` and `chat`. Requires `CONFIG_MRAF_MCP=y` (default).
 
 ## Simulator-only endpoints
 

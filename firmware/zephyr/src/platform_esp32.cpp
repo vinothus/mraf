@@ -1,5 +1,6 @@
 // ESP32 platform implementation for the MRAF farm controller.
 #include "mraf_platform.h"
+#include "webrtc_peer.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/rtc.h>
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/net/dhcpv4.h>
 #include <zephyr/net/dhcpv4_server.h>
@@ -20,8 +22,13 @@
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/sntp.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/net/virtual.h>
+#include <zephyr/net/virtual_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
+#include <zephyr/net/wireguard.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/sys/base64.h>
 #if defined(CONFIG_ARCH_POSIX)
 #include <zephyr/sys/reboot.h>
 #else
@@ -56,9 +63,11 @@ static char g_timezone[48] = "UTC0";
 
 static struct net_if *sta_iface;
 static struct net_if *ap_iface;
+#if defined(CONFIG_WIFI_ESP32)
 static struct net_mgmt_event_callback g_wifi_cb;
+#endif
 static struct k_sem g_ip_sem;
-static K_THREAD_STACK_DEFINE(g_time_stack, 4096);
+static K_THREAD_STACK_DEFINE(g_time_stack, 3072);
 static struct k_thread g_time_thread;
 
 static volatile bool g_sta_connected;
@@ -79,7 +88,7 @@ static float g_acs_zero_mv = 1250.0f;
 #define CONFIG_MRAF_HTTP_PORT 80
 #endif
 
-DNS_SD_REGISTER_TCP_SERVICE(mraf_http_mdns, "MRAF Farm Controller", "_http",
+DNS_SD_REGISTER_TCP_SERVICE(mraf_http_mdns, "Neer Kaavalan", "_http",
                             "local", DNS_SD_EMPTY_TXT, CONFIG_MRAF_HTTP_PORT);
 
 // --- helpers --------------------------------------------------------------
@@ -280,6 +289,19 @@ static void time_sync_thread(void *a, void *b, void *c)
 
 // --- ADC ------------------------------------------------------------------
 
+// Zephyr's Xtensa boot path leaves CPENABLE to the SoC reset code, and the
+// ESP32 reset path never enables coprocessor 0 (the FPU). Any thread that
+// touches a float dies with EXCCAUSE 32. Turn it on as early as possible.
+static int mraf_enable_fpu(void)
+{
+    uint32_t cp;
+    __asm__ volatile("rsr.cpenable %0" : "=r"(cp));
+    cp |= BIT(0);
+    __asm__ volatile("wsr.cpenable %0" ::"r"(cp));
+    return 0;
+}
+SYS_INIT(mraf_enable_fpu, PRE_KERNEL_1, 0);
+
 static int read_adc_mv(const struct adc_dt_spec *spec, int32_t *mv_out)
 {
     if (!adc_is_ready_dt(spec)) {
@@ -386,6 +408,7 @@ static void update_net_info(void)
     }
 }
 
+#if defined(CONFIG_WIFI_ESP32)
 static void wifi_event_handler(struct net_mgmt_event_callback *cb,
                                uint64_t event, struct net_if *iface)
 {
@@ -490,6 +513,7 @@ static void start_sta(const Config &cfg)
     sta.timeout = 20;
     (void)net_mgmt(NET_REQUEST_WIFI_CONNECT, sta_iface, &sta, sizeof(sta));
 }
+#endif /* CONFIG_WIFI_ESP32 */
 
 void mraf_platform_init(void)
 {
@@ -540,16 +564,20 @@ bool mraf_platform_is_ap_mode(void)
 
 void mraf_platform_start_network(const Config &cfg)
 {
+#if defined(CONFIG_WIFI_ESP32)
     sta_iface = net_if_get_wifi_sta();
     ap_iface = net_if_get_wifi_sap();
 
     net_mgmt_init_event_callback(&g_wifi_cb, wifi_event_handler, WIFI_EVENT_MASK);
     net_mgmt_add_event_callback(&g_wifi_cb);
+#endif
     net_hostname_set(cfg.device_id[0] ? cfg.device_id : "mraf",
                      strlen(cfg.device_id[0] ? cfg.device_id : "mraf"));
 
+#if defined(CONFIG_WIFI_ESP32)
     start_ap(cfg);
     start_sta(cfg);
+#endif
 
     k_thread_create(&g_time_thread, g_time_stack,
                     K_THREAD_STACK_SIZEOF(g_time_stack), time_sync_thread,
@@ -624,6 +652,342 @@ void mraf_platform_restart(void)
     esp_restart();
 #endif
 }
+
+// --- WireGuard overlay ----------------------------------------------------
+// The server pushes a complete tunnel description over CoAP. When the build
+// enables the native Zephyr WireGuard service we install it into the network
+// stack; otherwise the configuration is stored but not applied.
+
+#if defined(CONFIG_WIREGUARD)
+
+static bool g_wg_active;
+
+struct wg_iface_search {
+    struct net_if *iface;
+};
+
+static void wg_iface_cb(struct net_if *iface, void *user_data)
+{
+    struct wg_iface_search *s = (struct wg_iface_search *)user_data;
+    if (s->iface) {
+        return;
+    }
+    if (net_if_l2(iface) != &NET_L2_GET_NAME(VIRTUAL)) {
+        return;
+    }
+    if (!(net_virtual_get_iface_capabilities(iface) & VIRTUAL_INTERFACE_VPN)) {
+        return;
+    }
+    s->iface = iface;
+}
+
+static bool wg_add_address(struct net_if *iface, const char *spec)
+{
+    struct sockaddr_storage addr = {};
+    struct sockaddr *paddr = (struct sockaddr *)&addr;
+    uint8_t mask_len = 0;
+    if (!net_ipaddr_parse_mask(spec, strlen(spec), paddr, &mask_len)) {
+        return false;
+    }
+    if (paddr->sa_family == AF_INET) {
+        struct sockaddr_in *a4 = (struct sockaddr_in *)paddr;
+        if (!net_if_ipv4_addr_add(iface, &a4->sin_addr, NET_ADDR_MANUAL, 0)) {
+            return false;
+        }
+        struct sockaddr_in mask = {};
+        if (net_mask_len_to_netmask(AF_INET, mask_len, (struct sockaddr *)&mask) < 0) {
+            return false;
+        }
+        return net_if_ipv4_set_netmask_by_addr(iface, &a4->sin_addr, &mask.sin_addr);
+    }
+    if (paddr->sa_family == AF_INET6) {
+        struct sockaddr_in6 *a6 = (struct sockaddr_in6 *)paddr;
+        if (!net_if_ipv6_addr_add(iface, &a6->sin6_addr, NET_ADDR_MANUAL, 0)) {
+            return false;
+        }
+        struct in6_addr net6 = {};
+        net_ipv6_addr_prefix_mask((uint8_t *)&a6->sin6_addr, (uint8_t *)&net6, mask_len);
+        return net_if_ipv6_prefix_add(iface, &net6, mask_len, 0xffffffff);
+    }
+    return false;
+}
+
+static bool wg_add_allowed_ips(struct wireguard_peer_config *peer, const char *spec)
+{
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s", spec);
+    bool found = false;
+    char *save = nullptr;
+    for (char *tok = strtok_r(buf, ", ", &save); tok; tok = strtok_r(nullptr, ", ", &save)) {
+        struct sockaddr_storage addr = {};
+        struct sockaddr *paddr = (struct sockaddr *)&addr;
+        uint8_t mask_len = 0;
+        if (!net_ipaddr_parse_mask(tok, strlen(tok), paddr, &mask_len)) {
+            continue;
+        }
+        for (int i = 0; i < WIREGUARD_MAX_SRC_IPS; i++) {
+            if (peer->allowed_ip[i].is_valid) {
+                continue;
+            }
+            if (paddr->sa_family == AF_INET) {
+                struct sockaddr_in *a4 = (struct sockaddr_in *)paddr;
+                memcpy(&peer->allowed_ip[i].addr.in_addr, &a4->sin_addr,
+                       sizeof(struct in_addr));
+                peer->allowed_ip[i].addr.family = AF_INET;
+            } else if (paddr->sa_family == AF_INET6) {
+                struct sockaddr_in6 *a6 = (struct sockaddr_in6 *)paddr;
+                memcpy(&peer->allowed_ip[i].addr.in6_addr, &a6->sin6_addr,
+                       sizeof(struct in6_addr));
+                peer->allowed_ip[i].addr.family = AF_INET6;
+            } else {
+                break;
+            }
+            peer->allowed_ip[i].is_valid = true;
+            peer->allowed_ip[i].mask_len = mask_len;
+            found = true;
+            break;
+        }
+    }
+    return found;
+}
+
+static bool wg_resolve_endpoint(const char *endpoint, struct sockaddr_storage *out)
+{
+    char host[80];
+    char port[8] = "51820";
+    snprintf(host, sizeof(host), "%s", endpoint ? endpoint : "");
+    char *colon = strrchr(host, ':');
+    if (colon && strchr(host, ']') == nullptr) {
+        *colon = '\0';
+        snprintf(port, sizeof(port), "%s", colon + 1);
+    } else if (colon && colon[1] != '\0') {
+        snprintf(port, sizeof(port), "%s", colon + 1);
+        char *close = strchr(host, ']');
+        if (close) {
+            *close = '\0';
+        }
+    }
+    if (host[0] == '[') {
+        memmove(host, host + 1, strlen(host));
+    }
+    struct zsock_addrinfo hints = {};
+    struct zsock_addrinfo *res = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    if (zsock_getaddrinfo(host, port, &hints, &res) != 0 || !res) {
+        return false;
+    }
+    memcpy(out, res->ai_addr, res->ai_addrlen);
+    zsock_freeaddrinfo(res);
+    return true;
+}
+
+bool mraf_platform_wireguard_apply(const WireGuardConfig &cfg)
+{
+    struct wg_iface_search search = {};
+    net_if_foreach(wg_iface_cb, &search);
+    if (!search.iface) {
+        printk("WireGuard: no VPN-capable interface available\n");
+        return false;
+    }
+    struct net_if *iface = search.iface;
+
+    uint8_t private_key[NET_VIRTUAL_MAX_PUBLIC_KEY_LEN];
+    size_t olen = 0;
+    if (base64_decode(private_key, sizeof(private_key), &olen, cfg.private_key,
+                      strlen(cfg.private_key)) < 0) {
+        printk("WireGuard: invalid private key\n");
+        return false;
+    }
+    struct virtual_interface_req_params params = {};
+    params.private_key.data = private_key;
+    params.private_key.len = sizeof(private_key);
+    int ret = net_mgmt(NET_REQUEST_VIRTUAL_INTERFACE_SET_PRIVATE_KEY, iface,
+                       &params, sizeof(params));
+    memset(private_key, 0, sizeof(private_key));
+    if (ret < 0) {
+        printk("WireGuard: cannot set private key (%d)\n", ret);
+        return false;
+    }
+
+    if (cfg.address[0] && !wg_add_address(iface, cfg.address)) {
+        printk("WireGuard: cannot add address %s\n", cfg.address);
+    }
+
+    struct wireguard_peer_config peer = {};
+    peer.public_key = cfg.peer_public_key;
+
+    static uint8_t psk[32];
+    if (cfg.peer_preshared_key[0]) {
+        size_t plen = 0;
+        if (base64_decode(psk, sizeof(psk), &plen, cfg.peer_preshared_key,
+                          strlen(cfg.peer_preshared_key)) >= 0) {
+            peer.preshared_key = psk;
+        }
+    }
+
+    if (!wg_add_allowed_ips(&peer, cfg.peer_allowed_ips)) {
+        printk("WireGuard: no usable allowed IPs\n");
+        return false;
+    }
+
+    if (!wg_resolve_endpoint(cfg.peer_endpoint, &peer.endpoint_ip)) {
+        printk("WireGuard: cannot resolve endpoint %s\n", cfg.peer_endpoint);
+        return false;
+    }
+
+    peer.keepalive_interval = cfg.persistent_keepalive;
+
+    struct net_if *peer_iface = nullptr;
+    ret = wireguard_peer_add(&peer, &peer_iface);
+    if (ret < 0) {
+        printk("WireGuard: cannot add peer (%d)\n", ret);
+        return false;
+    }
+
+    // The keepalive after peer_add does not start a handshake until traffic is
+    // routed into the tunnel, so send one probe datagram to the first allowed
+    // address to bring the tunnel up (Zephyr issue #123993).
+    int fd = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd >= 0) {
+        struct sockaddr_in probe = {};
+        probe.sin_family = AF_INET;
+        probe.sin_port = htons(9);
+        if (peer.allowed_ip[0].is_valid && peer.allowed_ip[0].addr.family == AF_INET) {
+            memcpy(&probe.sin_addr, &peer.allowed_ip[0].addr.in_addr,
+                   sizeof(struct in_addr));
+            (void)zsock_sendto(fd, "m", 1, 0, (struct sockaddr *)&probe, sizeof(probe));
+        }
+        zsock_close(fd);
+    }
+
+    g_wg_active = true;
+    printk("WireGuard: peer %d installed on interface %d\n", ret,
+           peer_iface ? net_if_get_by_iface(peer_iface) : -1);
+    return true;
+}
+
+bool mraf_platform_wireguard_active(void)
+{
+    return g_wg_active;
+}
+
+#else // !CONFIG_WIREGUARD
+
+bool mraf_platform_wireguard_apply(const WireGuardConfig &cfg)
+{
+    ARG_UNUSED(cfg);
+    printk("WireGuard: built without CONFIG_WIREGUARD; config stored only\n");
+    return false;
+}
+
+bool mraf_platform_wireguard_active(void)
+{
+    return false;
+}
+
+#endif // CONFIG_WIREGUARD
+
+#if defined(CONFIG_MRAF_WEBRTC)
+
+// WebRTC data-channel transport for the ESP32 target.
+//
+// The portable peer in webrtc_peer.cpp (ICE-lite STUN + mbedTLS DTLS + the
+// minimal SCTP association) is shared with the native_sim build, so the code
+// exercised against a real browser on the host is the same code that runs on
+// the ESP32. The signalling client in webrtc.cpp owns the SDP offer/answer
+// exchange and passes the remote offer straight through.
+bool mraf_platform_webrtc_available(void)
+{
+    return mraf_peer_available();
+}
+
+bool mraf_platform_webrtc_start(const char *offer_sdp, char *answer_sdp,
+                                size_t answer_cap)
+{
+    return mraf_peer_start(offer_sdp, answer_sdp, answer_cap);
+}
+
+void mraf_platform_webrtc_stop(void)
+{
+    mraf_peer_stop();
+}
+
+bool mraf_platform_webrtc_open(void)
+{
+    return mraf_peer_open();
+}
+
+int mraf_platform_webrtc_send(const char *message)
+{
+    return mraf_peer_send(message);
+}
+
+char *mraf_platform_webrtc_tx_begin(size_t *cap)
+{
+    return mraf_peer_tx_begin(cap);
+}
+
+int mraf_platform_webrtc_tx_end(size_t len)
+{
+    return mraf_peer_tx_end(len);
+}
+
+void mraf_platform_webrtc_set_rx(mraf_webrtc_rx_cb cb)
+{
+    mraf_peer_set_rx(cb);
+}
+
+#else // !CONFIG_MRAF_WEBRTC
+
+bool mraf_platform_webrtc_available(void)
+{
+    return false;
+}
+
+bool mraf_platform_webrtc_start(const char *offer_sdp, char *answer_sdp,
+                                size_t answer_cap)
+{
+    ARG_UNUSED(offer_sdp);
+    if (answer_sdp && answer_cap) {
+        answer_sdp[0] = '\0';
+    }
+    return false;
+}
+
+void mraf_platform_webrtc_stop(void)
+{
+}
+
+bool mraf_platform_webrtc_open(void)
+{
+    return false;
+}
+
+int mraf_platform_webrtc_send(const char *message)
+{
+    ARG_UNUSED(message);
+    return -1;
+}
+
+char *mraf_platform_webrtc_tx_begin(size_t *cap)
+{
+    ARG_UNUSED(cap);
+    return NULL;
+}
+
+int mraf_platform_webrtc_tx_end(size_t len)
+{
+    ARG_UNUSED(len);
+    return -1;
+}
+
+void mraf_platform_webrtc_set_rx(mraf_webrtc_rx_cb cb)
+{
+    ARG_UNUSED(cb);
+}
+
+#endif // CONFIG_MRAF_WEBRTC
 
 bool mraf_platform_mains_present(void)
 {

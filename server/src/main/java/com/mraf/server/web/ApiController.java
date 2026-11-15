@@ -90,6 +90,37 @@ public class ApiController {
         }
     }
 
+    @GetMapping("/devices/{id}/console")
+    public JsonNode console(@PathVariable String id, Authentication auth) {
+        requireAccess(id, auth);
+        try {
+            return state.consoleSnapshot(id);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
+        }
+    }
+
+    @PostMapping("/devices/{id}/console")
+    public JsonNode consoleCommand(@PathVariable String id, @RequestBody JsonNode body,
+                                   Authentication auth) {
+        requireAccess(id, auth);
+        try {
+            return state.queueConsole(id, body.path("command").asText(""));
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
+        }
+    }
+
+    @DeleteMapping("/devices/{id}/console")
+    public JsonNode clearConsole(@PathVariable String id, Authentication auth) {
+        requireAccess(id, auth);
+        try {
+            return state.clearConsole(id);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
+        }
+    }
+
     @DeleteMapping("/devices/{id}/queue")
     public Map<String, Object> clearQueue(@PathVariable String id, Authentication auth) {
         requireAccess(id, auth);

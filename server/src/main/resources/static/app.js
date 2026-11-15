@@ -19,6 +19,14 @@ let editorsRendered = false;
 let configSig = "";
 let activeTab = "dash";
 let toastTimer = null;
+let wgStatus = null;
+let wgClientCfg = "";
+let chatMessages = [];
+let adminTab = "fleet";
+let consoleDeviceId = null;
+let consoleData = null;
+let consoleRendered = "";
+let liveData = null;
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -132,7 +140,11 @@ async function init() {
 async function refresh() {
   try {
     if (deviceId) await loadDevice(false);
-    else if (me && me.role === "admin") await loadOverview();
+    else if (me && me.role === "admin") {
+      await loadOverview();
+      if (adminTab === "console" && consoleDeviceId) await loadConsole(false);
+      if (adminTab === "live") await loadLiveLinks();
+    }
   } catch (e) {
     const pill = $("#link-pill");
     if (pill) { pill.textContent = "Server unreachable"; pill.className = "pill offline"; }
@@ -178,6 +190,174 @@ function renderOverview() {
       </div>
     </article>`;
   }).join("");
+  if (adminTab === "console") renderConsoleDevices();
+}
+
+// ----------------------------------------------------------------- console
+function switchAdminTab(name) {
+  adminTab = name;
+  $$(".tab[data-admin-tab]").forEach(t => t.classList.toggle("active", t.dataset.adminTab === name));
+  $("#admin-fleet").hidden = name !== "fleet";
+  $("#admin-console").hidden = name !== "console";
+  $("#admin-live").hidden = name !== "live";
+  if (name === "live") { loadLiveLinks(); }
+  if (name === "console") {
+    renderConsoleDevices();
+    if (!consoleDeviceId) {
+      const devices = (overview && overview.devices) || [];
+      const first = devices.find(d => d.confirmed) || devices[0];
+      if (first) { selectConsoleDevice(first.id); return; }
+    }
+    loadConsole(false);
+  }
+}
+
+async function dropSession(id) {
+  try {
+    await api("/api/webrtc/sessions/" + encodeURIComponent(id), {method: "DELETE"});
+    showToast("Session dropped");
+    await loadLiveLinks();
+  } catch (e) {
+    showToast(e.message || "failed", true);
+  }
+}
+
+async function loadLiveLinks() {
+  try {
+    liveData = await api("/api/webrtc/sessions");
+    renderLiveLinks();
+  } catch (e) {
+    const grid = $("#live-grid");
+    if (grid) grid.innerHTML = `<p class="hint">${esc(e.message || "unavailable")}</p>`;
+  }
+}
+
+function renderLiveLinks() {
+  const d = liveData || { sessions: [] };
+  const sessions = d.sessions || [];
+  $("#live-count").textContent = d.count != null ? d.count : sessions.length;
+  $("#live-stun").textContent = d.stunPort != null ? d.stunPort : "--";
+  $("#live-ttl").textContent = d.ttlSeconds != null ? d.ttlSeconds : "--";
+  const connected = sessions.filter(s => {
+    const b = s.browser || {}, dev = s.device || {};
+    return b.state === "connected" || dev.state === "connected";
+  }).length;
+  $("#live-connected").textContent = connected;
+  $("#live-empty").hidden = sessions.length > 0;
+  const grid = $("#live-grid");
+  grid.innerHTML = sessions.map(s => {
+    const b = s.browser || {}, dev = s.device || {};
+    const state = b.state || dev.state || "negotiating";
+    const on = state === "connected";
+    const bytes = (b.rx_bytes || dev.rx_bytes || 0) + (b.tx_bytes || dev.tx_bytes || 0);
+    const rtt = (b.rtt_ms != null ? b.rtt_ms : dev.rtt_ms);
+    return `<article class="card device-card">
+      <div class="device-card-head">
+        <div><span class="eyebrow">${esc(s.deviceId)}</span><h3>${esc(s.deviceId)}</h3></div>
+        <span class="pill ${on ? "on" : "warn"}">${esc(state)}</span>
+      </div>
+      <div class="device-flags">
+        <span class="pill info">browser: ${esc(b.state || "—")}</span>
+        <span class="pill info">device: ${esc(dev.state || "—")}</span>
+        <span class="pill">${rtt != null ? rtt + " ms" : "no rtt"}</span>
+        <span class="pill">${bytes} B</span>
+      </div>
+      <p class="hint">${s.signals || 0} signals relayed · STUN ${esc(dev.stun || "—")} · last activity ${fmtAge(s.lastActivity)}</p>
+      <div class="actions">
+        <button class="btn small danger" data-drop-session="${esc(s.deviceId)}" type="button">Drop session</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+function fmtAge(ms) {
+  if (!ms) return "—";
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return s + " s ago";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  return Math.round(s / 3600) + " h ago";
+}
+
+function renderConsoleDevices() {
+  const list = $("#console-device-list");
+  if (!list) return;
+  const devices = (overview && overview.devices) || [];
+  if (!devices.length) {
+    list.innerHTML = `<p class="hint">No controllers registered yet.</p>`;
+    return;
+  }
+  list.innerHTML = devices.map(d => `<button class="console-device ${d.id === consoleDeviceId ? "active" : ""}" data-console-device="${esc(d.id)}" type="button">
+    <span class="dot ${d.online ? "on" : ""}"></span>
+    <span class="cd-text"><b>${esc(d.name || d.id)}</b><small>${esc(d.id)} · ${esc(d.firmware || "fw?")}</small></span>
+    <span class="pill ${d.online ? "on" : "offline"}">${d.online ? "online" : "offline"}</span>
+  </button>`).join("");
+}
+
+async function selectConsoleDevice(id) {
+  consoleDeviceId = id;
+  consoleData = null;
+  consoleRendered = "";
+  renderConsoleDevices();
+  await loadConsole(true);
+}
+
+async function loadConsole(initial) {
+  if (!consoleDeviceId) return;
+  try {
+    consoleData = await api(`/api/devices/${encodeURIComponent(consoleDeviceId)}/console`);
+  } catch (e) {
+    if (initial) showToast(e.message, true);
+    return;
+  }
+  renderConsole();
+}
+
+function renderConsole() {
+  const d = consoleData;
+  if (!d) return;
+  $("#console-dev-id").textContent = d.deviceId;
+  $("#console-dev-name").textContent = d.name || d.deviceId;
+  $("#console-link").textContent = d.online ? "connected" : "offline";
+  $("#console-link").className = "pill " + (d.online ? "on" : "offline");
+  $("#console-pending").textContent = `${d.pending || 0} pending`;
+  $("#console-pending").className = "pill " + (d.pending ? "warn" : "");
+
+  const entries = d.entries || [];
+  const sig = JSON.stringify(entries) + "|" + d.online;
+  if (sig === consoleRendered) return;
+  consoleRendered = sig;
+  const term = $("#console-term");
+  if (!entries.length) {
+    term.innerHTML = `<span class="term-hint">Console ready. Try <b>help</b>, <b>mraf status</b> or <b>kernel version</b>.</span>`;
+    return;
+  }
+  term.innerHTML = entries.map(e => `<div class="term-entry">
+    <div class="term-cmd"><span class="prompt">uart:~$</span> ${esc(e.command)}</div>
+    ${e.output ? `<pre class="term-out">${esc(e.output)}</pre>` : ""}
+    <div class="term-time">${esc(e.at)}</div>
+  </div>`).join("");
+  term.scrollTop = term.scrollHeight;
+}
+
+async function sendConsoleCommand() {
+  const input = $("#console-input");
+  const command = input.value.trim();
+  if (!command || !consoleDeviceId) return;
+  input.value = "";
+  if (command === "clear") { await clearConsole(); return; }
+  try {
+    await api(`/api/devices/${encodeURIComponent(consoleDeviceId)}/console`, {method: "POST", body: JSON.stringify({command})});
+    showToast(`Command queued: ${command}`);
+  } catch (e) { showToast(e.message, true); }
+}
+
+async function clearConsole() {
+  if (!consoleDeviceId) return;
+  try {
+    await api(`/api/devices/${encodeURIComponent(consoleDeviceId)}/console`, {method: "DELETE"});
+    consoleRendered = "";
+    await loadConsole(false);
+  } catch (e) { showToast(e.message, true); }
 }
 
 function backToFleet() {
@@ -190,6 +370,7 @@ function backToFleet() {
 async function openDevice(id) {
   deviceId = id;
   draft = null; draftDirty = false; editorsRendered = false; configSig = "";
+  wgStatus = null; wgClientCfg = ""; chatMessages = [];
   $("#admin-view").hidden = true;
   $("#login-view").hidden = true;
   $("#device-view").hidden = false;
@@ -497,12 +678,118 @@ async function deleteDevice(id) {
 
 function switchTab(name) {
   activeTab = name;
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+  $$(".tab[data-tab]").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
   $$(".tab-page").forEach(p => { p.hidden = p.id !== "tab-" + name; });
   if ((name === "sched" || name === "rec") && draft && (!editorsRendered || !draftDirty)) {
     if (!editorsRendered) renderEditors();
   }
   if (name === "activity") renderActivity();
+  if (name === "link") loadWireGuard();
+  if (name === "chat") renderChat();
+}
+
+// ------------------------------------------------------------ wireguard
+async function loadWireGuard() {
+  const admin = me && me.role === "admin";
+  const provBtn = $("#wg-provision");
+  const applyBtn = $("#wg-apply");
+  if (provBtn) provBtn.hidden = !admin;
+  if (applyBtn) applyBtn.hidden = !admin;
+  if (admin) {
+    try { wgStatus = await api("/api/wireguard/status"); }
+    catch (e) { wgStatus = null; }
+  }
+  try {
+    const res = await fetch(`/api/wireguard/devices/${encodeURIComponent(deviceId)}/config/wg`, {credentials: "same-origin"});
+    wgClientCfg = res.ok ? await res.text() : "";
+  } catch (e) { wgClientCfg = ""; }
+  renderWireGuard();
+}
+
+function renderWireGuard() {
+  const s = wgStatus;
+  $("#wg-iface").textContent = s ? (s.interface || "--") : "--";
+  $("#wg-subnet").textContent = s ? (s.subnet || "") : "";
+  $("#wg-server").textContent = s ? (s.serverAddress || "--") : "--";
+  $("#wg-port").textContent = "UDP " + (s ? (s.listenPort ?? "--") : "--");
+  $("#wg-peers").textContent = s ? String(s.peerCount ?? 0) : "--";
+  $("#wg-online").textContent = s ? `${s.onlinePeers ?? 0} online` : "admin view only";
+  $("#wg-kernel").textContent = s ? (s.manageKernel ? "managed" : "manual") : "--";
+  $("#wg-kernel-sub").textContent = s ? (s.manageKernel ? "wg-quick enabled" : "render only") : "--";
+  $("#wg-pubkey").textContent = s ? (s.serverPublicKey || "--") : "admin view only";
+
+  const list = $("#wg-peer-list");
+  if (!s) {
+    list.innerHTML = `<p class="hint">Sign in as admin to manage all peers.</p>`;
+  } else if (!(s.peers || []).length) {
+    list.innerHTML = `<p class="hint">No peers yet.</p>`;
+  } else {
+    list.innerHTML = s.peers.map(p => `<div class="log-item">
+      <span>${esc(p.address)}</span><b>${p.online ? "up" : "idle"}</b>
+      <span>${esc(p.deviceId)} · ${esc(String(p.publicKey || "").slice(0, 16))}…</span>
+    </div>`).join("");
+  }
+  $("#wg-client-cfg").textContent = wgClientCfg || "No tunnel provisioned for this device yet.";
+}
+
+async function provisionPeer() {
+  try {
+    await api(`/api/wireguard/devices/${encodeURIComponent(deviceId)}/peer`, {method: "POST"});
+    showToast("WireGuard peer provisioned and queued for the next poll");
+    await loadDevice(false);
+    await loadWireGuard();
+  } catch (e) { showToast(e.message, true); }
+}
+
+async function applyKernel() {
+  try {
+    const r = await api("/api/wireguard/apply", {method: "POST"});
+    showToast(r.message || "WireGuard applied");
+    await loadWireGuard();
+  } catch (e) { showToast(e.message, true); }
+}
+
+// ------------------------------------------------------------ assistant
+function renderChat() {
+  const log = $("#chat-log");
+  if (!chatMessages.length) {
+    log.innerHTML = `<div class="chat-msg bot"><span class="who">நீர்காவலன் assistant</span>`
+      + `<span class="reply">Ask me to control the controller — e.g. "turn on relay 3", `
+      + `"pump off", "all auto" or "status".</span></div>`;
+    return;
+  }
+  log.innerHTML = chatMessages.map(m => {
+    if (m.role === "user") {
+      return `<div class="chat-msg user"><span class="who">You</span>${esc(m.text)}</div>`;
+    }
+    return `<div class="chat-msg bot ${m.error ? "err" : ""}"><span class="who">நீர்காவலன் assistant</span>`
+      + `<span class="reply">${esc(m.text)}</span>${m.meta ? `<span class="meta">${m.meta}</span>` : ""}</div>`;
+  }).join("");
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendChat(text) {
+  const msg = (text ?? $("#chat-input").value).trim();
+  if (!msg || !deviceId) return;
+  $("#chat-input").value = "";
+  chatMessages.push({role: "user", text: msg});
+  renderChat();
+  try {
+    const r = await api("/api/chat", {method: "POST", body: JSON.stringify({device_id: deviceId, text: msg})});
+    let meta = "";
+    if (r.action === "control" && r.command) {
+      meta = `queued <code>${esc(r.command.target)}${r.command.id ? " #" + r.command.id : ""} ${esc(r.command.mode)}</code>`;
+    } else if (r.action === "data") {
+      meta = "queued <code>data</code>";
+    } else if (r.action === "status" && r.status) {
+      meta = `online <code>${r.status.online}</code> · queued <code>${r.status.queued}</code>`;
+    }
+    chatMessages.push({role: "bot", text: r.reply, meta, error: !r.understood});
+    await loadDevice(false);
+  } catch (e) {
+    chatMessages.push({role: "bot", text: e.message, error: true});
+  }
+  renderChat();
 }
 
 // ------------------------------------------------------------------ events
@@ -510,6 +797,15 @@ document.addEventListener("click", async ev => {
   const t = ev.target;
   if (t.closest("#refresh") || t.closest("#adm-refresh")) { await refresh(); showToast("Refreshed"); return; }
   if (t.closest("#back-btn")) { backToFleet(); return; }
+  const atab = t.closest("[data-admin-tab]");
+  if (atab) { switchAdminTab(atab.dataset.adminTab); return; }
+  const cdev = t.closest("[data-console-device]");
+  if (cdev) { await selectConsoleDevice(cdev.dataset.consoleDevice); return; }
+  if (t.closest("#live-refresh")) { await loadLiveLinks(); showToast("Refreshed"); return; }
+  const dropBtn = t.closest("[data-drop-session]");
+  if (dropBtn) { ev.stopPropagation(); await dropSession(dropBtn.dataset.dropSession); return; }
+  if (t.closest("#live-grid")) { return; }
+  if (t.closest("#console-clear")) { await clearConsole(); return; }
   if (t.closest("#dev-confirm")) { await confirmDevice(deviceId); return; }
   if (t.closest("#dev-reject")) { await rejectDevice(deviceId); return; }
   if (t.closest("#dev-delete")) { await deleteDevice(deviceId); return; }
@@ -558,6 +854,12 @@ document.addEventListener("click", async ev => {
     return;
   }
   if (t.closest("#save-config") || t.closest("#save-config-rec")) { await saveConfig(); return; }
+  if (t.closest("#wg-provision")) { await provisionPeer(); return; }
+  if (t.closest("#wg-apply")) { await applyKernel(); return; }
+  if (t.closest("#wg-refresh")) { await loadWireGuard(); showToast("Tunnel refreshed"); return; }
+  if (t.closest("#chat-clear")) { chatMessages = []; renderChat(); return; }
+  const quick = t.closest("[data-chat-quick]");
+  if (quick) { await sendChat(quick.dataset.chatQuick); return; }
   if (t.closest("#add-rec")) {
     if (!draft) return;
     if ((draft.recurring || []).length >= 8) return showToast("Maximum 8 recurring schedules", true);
@@ -601,4 +903,6 @@ initTheme();
 $("#theme-toggle").addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true);
 });
+$("#chat-form").addEventListener("submit", ev => { ev.preventDefault(); sendChat(); });
+$("#console-form").addEventListener("submit", ev => { ev.preventDefault(); sendConsoleCommand(); });
 init();

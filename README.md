@@ -1,4 +1,4 @@
-# MRAF Farm Controller
+# நீர்காவலன் Neer Kaavalan (MRAF Farm Controller)
 
 An ESP32 farm automation controller for a 5 HP 3-phase borewell pump plus 12
 scheduled single-phase loads. It uses off-the-shelf modules, a built-in web
@@ -35,6 +35,20 @@ alive on a 12.8 V LiFePO4 battery while all relay coils drop out during a power 
 - Optional Matter bridge: exposes each confirmed device's relays, pump, tank
   sensor and sump sensor to Apple Home, Google Home, Alexa or Home Assistant
   without changing the ESP32 firmware.
+- WireGuard overlay: the server provisions each device's tunnel (keys, address,
+  server peer) and pushes it on the next poll; the device applies it with the
+  Zephyr native WireGuard stack for LAN and remote access.
+- Remote console: the server's Console tab lists every connected controller and
+  runs commands on its on-device Zephyr shell (`mraf status`, `kernel version`,
+  `net iface`, `mraf relay ...`) over the same CoAP poll, streaming the output
+  back in the ACK.
+- On-device MCP endpoint (`POST /mcp`, JSON-RPC 2.0) exposing `get_status`,
+  `control_relay`, `control_pump`, `set_all`, `apply_config`,
+  `wireguard_status`, `console_command`, `console_output` and `chat`, mirrored
+  by the server.
+- Offline grammar chat (`POST /api/chat`): a deterministic keyword grammar maps
+  utterances like "turn on relay 3" or "boost pump 30 min" to controller
+  actions. No language model, identical grammar on ESP32, simulator and server.
 - Native simulator with accelerated clock, fault injection, HTTP API and
   scenario presets.
 - No custom PCB. Everything is DIN-rail terminals, ready-made modules and
@@ -92,8 +106,25 @@ See [docs/11-springboot-server.md](docs/11-springboot-server.md). A recorded
 walkthrough in the bright theme is at
 [docs/demo/mraf-server-dashboard-demo.mp4](docs/demo/mraf-server-dashboard-demo.mp4)
 (admin login, theme selection, ESP32 confirmation, device-user login, live
-controls, schedules, recurring rules and activity). The dashboard has a
-dark/light theme toggle; the choice is remembered in the browser.
+controls, schedules, recurring rules, WireGuard tunnel provisioning, grammar
+chat and activity). The dashboard has a dark/light theme toggle; the choice is
+remembered in the browser. The remote console is shown in
+[docs/demo/mraf-server-console-demo.mp4](docs/demo/mraf-server-console-demo.mp4)
+(list the connected controllers, attach to one and run shell commands).
+
+## Quick start: peer-to-peer dashboard (WebRTC)
+
+The device dashboard can read and write over a **direct, encrypted WebRTC data
+channel** between the browser and the controller, so live data never passes
+through the server. The server only runs a STUN server and relays the SDP/ICE
+handshake. Enable it in the device settings (or `webrtc.enabled` in the config)
+and point `webrtc.server` at the Spring Boot control plane. The admin "Live
+links" tab shows the connected peers. See
+[docs/13-webrtc.md](docs/13-webrtc.md). A recorded walkthrough is at
+[docs/demo/mraf-server-webrtc-demo.mp4](docs/demo/mraf-server-webrtc-demo.mp4)
+(controller dashboard on the left, server admin on the right: the browser opens
+the data channel, relay commands run over it, and the server sees only link
+state, RTT and byte counters).
 
 ## Quick start: Matter bridge
 
@@ -127,8 +158,10 @@ make zephyr-flash PORT=/dev/ttyUSB0
 make zephyr-monitor PORT=/dev/ttyUSB0
 ```
 
-The native build serves the dashboard on `http://127.0.0.1:8080`. ESP32 builds
-need the Espressif HAL blobs once:
+The native build serves the dashboard on `http://127.0.0.1:8080`. Full host
+toolchain setup for Linux and Windows is in
+[docs/15-toolchain-setup.md](docs/15-toolchain-setup.md). ESP32 builds need the
+Espressif HAL blobs once:
 
 ```bash
 cd /opt/zephyrproject && west blobs fetch hal_espressif
@@ -139,7 +172,11 @@ See [okf/zephyr-port.md](okf/zephyr-port.md) for the architecture and
 walkthroughs are at
 [docs/demo/mraf-esp32-http-demo.mp4](docs/demo/mraf-esp32-http-demo.mp4)
 (local login, theme selection, live pump/relay control, schedules, recurring
-rules, settings and events in the bright theme) and
+rules, WireGuard tunnel state, offline grammar chat and events in the bright
+theme),
+[docs/demo/mraf-remote-tunnel-demo.mp4](docs/demo/mraf-remote-tunnel-demo.mp4)
+(setting the remote CoAP server on the device and bringing up the WireGuard
+tunnel) and
 [docs/demo/zephyr-native-demo.mp4](docs/demo/zephyr-native-demo.mp4)
 (build, E2E and API terminal walkthrough). The device dashboard also includes a
 dark/light theme toggle, stored locally in the browser.
@@ -249,15 +286,21 @@ docs/                  requirements, wiring, firmware, API, operation, video
 10. [Remote Java server over CoAP](docs/10-remote-coap.md)
 11. [Spring Boot server and dashboard](docs/11-springboot-server.md)
 12. [Matter bridge](docs/12-matter-bridge.md)
-13. [OKF knowledge base](okf/index.md)
+13. [WebRTC peer-to-peer link](docs/13-webrtc.md)
+14. [Flash from an Android phone over USB OTG](docs/14-android-flash.md)
+15. [Toolchain setup for Windows and Linux](docs/15-toolchain-setup.md)
+16. [OKF knowledge base](okf/index.md)
 
 ## Verified in this workspace
 
 - `make test`: C++ schedule/controller tests (including recurring and pulse
-  cases) and 25 Python simulator/API tests pass.
-- `make server-test`: 10 Spring Boot tests pass against in-memory H2
+  cases) and 43 Python simulator/API tests pass (including chat, WireGuard,
+  MCP, WebRTC config and config-secret cases).
+- `make server-test`: 64 Spring Boot tests pass against in-memory H2
   (registration, confirmation, credentials, data ACK, control, config,
-  recurring, admin actions, device-user lookup, persistence reload).
+  recurring, admin actions, device-user lookup, persistence reload, WireGuard
+  control plane, STUN server, WebRTC registry/signalling and reconnect
+  handling, intent grammar, MCP and chat).
 - Firmware compiles with Arduino-ESP32 3.3.12 and ArduinoJson 7.4.3:
   1,149,018 bytes (87% of the default 1,310,720-byte app partition), 72,268
   bytes of RAM (22%).

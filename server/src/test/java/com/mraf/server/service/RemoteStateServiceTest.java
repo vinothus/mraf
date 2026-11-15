@@ -21,7 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "mraf.coap.port=0",
         "mraf.token=secret",
-        "mraf.server-timezone=Asia/Kolkata"
+        "mraf.server-timezone=Asia/Kolkata",
+        "mraf.wireguard.enabled=false"
 })
 class RemoteStateServiceTest {
     private static final String DEVICE = "ESP32-ABC123";
@@ -212,6 +213,46 @@ class RemoteStateServiceTest {
         assertEquals(DEVICE, user.deviceId());
         assertEquals(DEVICE, service.findDeviceIdByUser("farm"));
         assertNull(service.findDeviceUser("unknown"));
+    }
+
+    @Test
+    void queuesConsoleCommandAndStoresOutput() throws Exception {
+        register();
+        service.confirmDevice(DEVICE, mapper.createObjectNode());
+
+        JsonNode queued = service.queueConsole(DEVICE, "mraf status");
+        String id = queued.path("id").asText();
+        assertEquals("console", queued.path("type").asText());
+
+        JsonNode response = poll(confirmedPoll());
+        assertEquals("console", response.path("request").asText());
+        assertEquals(id, response.path("id").asText());
+        assertEquals("mraf status", response.path("command").asText());
+
+        poll("""
+                {"device_id":"%s","token":"secret",
+                 "auth":{"user":"farm","pass":"farm1234"},
+                 "ack":"%s","result":"ok",
+                 "console":"relays    : 3/12 on"}
+                """.formatted(DEVICE, id));
+
+        JsonNode console = service.consoleSnapshot(DEVICE);
+        assertEquals(0, console.path("pending").asInt());
+        assertEquals(1, console.path("entries").size());
+        assertEquals("mraf status", console.path("entries").get(0).path("command").asText());
+        assertEquals("relays    : 3/12 on",
+                console.path("entries").get(0).path("output").asText());
+        assertTrue(console.path("entries").get(0).path("ok").asBoolean());
+
+        assertEquals(1, service.clearConsole(DEVICE).path("cleared").asInt());
+        assertEquals(0, service.consoleSnapshot(DEVICE).path("entries").size());
+    }
+
+    @Test
+    void rejectsEmptyConsoleCommand() throws Exception {
+        register();
+        service.confirmDevice(DEVICE, mapper.createObjectNode());
+        assertThrows(IllegalArgumentException.class, () -> service.queueConsole(DEVICE, "  "));
     }
 
     @Test

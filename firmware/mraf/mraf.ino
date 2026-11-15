@@ -1,4 +1,4 @@
-// MRAF Farm Controller
+// Neer Kaavalan
 // 12 scheduled relays + one dedicated 5 HP 3-phase pump contactor
 // ESP32 DevKit V1 (ESP32-WROOM-32), Arduino-ESP32 core
 // Wi-Fi station with AP fallback, built-in HTTP server, NTP + DS3231 RTC.

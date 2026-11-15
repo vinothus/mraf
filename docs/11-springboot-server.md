@@ -109,6 +109,12 @@ The dashboard is a single-page app served from `static/`:
   tank/sump interlocks. Saving validates and queues a `config` request.
 - **Recurring** tab: up to eight daily/weekly/monthly/yearly schedules with
   channel selection, action and time window.
+- **Tunnel** tab: WireGuard overlay state, server key and listen port, the peer
+  list with handshake and online state, this device's rendered client config and
+  provision / apply-to-kernel actions. A peer is auto-provisioned when a device
+  is confirmed.
+- **Assistant** tab: offline grammar chat (the same deterministic parser the
+  ESP32 runs) with quick-command buttons; commands are queued over CoAP.
 - **Activity** tab: ACKs, events, queue inspection and cancellation.
 - **Theme**: a header button switches the whole dashboard between the dark and
   bright (light) themes; the choice is stored in `localStorage` and applied
@@ -136,11 +142,22 @@ All endpoints except `/api/health` require HTTP Basic auth.
 | `POST` | `/api/devices/{id}/data-request` | admin or owner | Queue a fresh snapshot |
 | `POST` | `/api/devices/{id}/control` | admin or owner | Queue relay/pump control |
 | `POST` | `/api/devices/{id}/config` | admin or owner | Validate and queue a full config |
+| `GET` | `/api/devices/{id}/console` | admin or owner | Buffered on-device console output |
+| `POST` | `/api/devices/{id}/console` | admin or owner | Queue a shell command (`command`) |
+| `DELETE` | `/api/devices/{id}/console` | admin or owner | Clear the console buffer |
 | `DELETE` | `/api/devices/{id}/queue` | admin or owner | Cancel queued requests |
 | `POST` | `/api/devices/{id}/confirm` | admin | Confirm a pending device |
 | `POST` | `/api/devices/{id}/reject` | admin | Reject a pending device |
 | `POST` | `/api/devices/{id}/update` | admin | Change profile / poll interval |
 | `DELETE` | `/api/devices/{id}` | admin | Delete a device and its requests |
+| `POST` | `/api/chat` | admin or owner | Grammar chat (`device_id` + `text`) |
+| `POST` | `/mcp` | admin | MCP JSON-RPC 2.0 endpoint (tools, wireguard, console, chat) |
+| `GET` | `/api/wireguard/status` | admin | Overlay status, server key and listen port |
+| `GET` | `/api/wireguard/peers` | admin | Provisioned peers and handshake state |
+| `POST` | `/api/wireguard/devices/{id}/peer` | admin | Provision or replace a device peer |
+| `GET` | `/api/wireguard/devices/{id}/config/wg` | admin or owner | Rendered client config |
+| `DELETE` | `/api/wireguard/devices/{id}/peer` | admin | Remove a device peer |
+| `POST` | `/api/wireguard/apply` | admin | Apply the interface to the kernel (when enabled) |
 | `GET` | `/api/state` | any | Backwards-compatible alias for the fleet or own device |
 
 Example control with a momentary pulse:
@@ -173,6 +190,31 @@ curl -u farm:farm-pass \
   snapshots fit in one datagram.
 
 The wire contract is in [10-remote-coap.md](10-remote-coap.md).
+
+## Remote console
+
+The dashboard's **Console** tab lists every connected controller. Selecting one
+attaches to its on-device Zephyr shell: the server queues a `console` request
+with a single command line, the controller runs it on its next poll and returns
+the captured output in the ACK. Output is kept per device (last 200 entries) and
+shown as a terminal with the `uart:~$` prompt.
+
+```bash
+# run a command on the controller's shell
+curl -u admin:mraf-demo -H 'Content-Type: application/json' \
+  -d '{"command":"mraf status"}' \
+  http://localhost:8080/api/devices/SIM-000001/console
+
+# read the buffered output
+curl -u admin:mraf-demo http://localhost:8080/api/devices/SIM-000001/console
+```
+
+The same capability is exposed to MCP clients as the `console_command` and
+`console_output` tools. Typical commands are `help`, `kernel version`,
+`device list`, `net iface`, `uptime`, `threads`, `mraf status`,
+`mraf relay <1-12> <on|off|auto>`, `mraf pump <on|off|auto>` and `mraf wg`.
+Relay and pump commands from the console go through the same safety rules as the
+dashboard.
 
 ## Tests and demo
 
@@ -213,6 +255,13 @@ A live walkthrough in the bright theme is in
 admin login, theme selection, confirmation of the pending ESP32, live relay and
 pump commands, schedules, recurring rules, the activity log and the device-user
 login as `farm`.
+
+The remote console is demonstrated in
+[demo/mraf-server-console-demo.mp4](demo/mraf-server-console-demo.mp4): the
+Console tab lists the connected controllers, one is selected, and shell commands
+(`help`, `mraf status`, `kernel version`, `net iface`, `mraf relay 5 on`,
+`mraf wg`, `uptime`) are run with their output streamed back over CoAP. It is
+recorded with `scripts/record_server_console_demo.js`.
 
 The walkthrough is reproducible with Playwright:
 

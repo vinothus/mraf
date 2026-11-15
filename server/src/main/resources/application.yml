@@ -36,6 +36,33 @@ mraf:
   dashboard:
     user: ${MRAF_DASHBOARD_USER:admin}
     password: ${MRAF_DASHBOARD_PASSWORD:mraf-demo}
+  wireguard:
+    enabled: ${MRAF_WG_ENABLED:true}
+    interface-name: ${MRAF_WG_IFACE:wg0}
+    subnet: ${MRAF_WG_SUBNET:10.66.66.0/24}
+    server-address: ${MRAF_WG_SERVER:10.66.66.1}
+    listen-port: ${MRAF_WG_PORT:51820}
+    endpoint: ${MRAF_WG_ENDPOINT:}
+    persistent-keepalive: ${MRAF_WG_KEEPALIVE:25}
+    dns: ${MRAF_WG_DNS:}
+    allowed-ips: ${MRAF_WG_ALLOWED_IPS:10.66.66.0/24}
+    manage-kernel: ${MRAF_WG_MANAGE_KERNEL:false}
+    config-dir: ${MRAF_WG_CONFIG_DIR:data/wireguard}
+    auto-provision: ${MRAF_WG_AUTO_PROVISION:true}
+  mcp:
+    enabled: ${MRAF_MCP_ENABLED:true}
+  webrtc:
+    enabled: ${MRAF_WEBRTC_ENABLED:true}
+    public-host: ${MRAF_WEBRTC_HOST:}
+    public-url: ${MRAF_WEBRTC_URL:}
+    stun:
+      enabled: ${MRAF_STUN_ENABLED:true}
+      port: ${MRAF_STUN_PORT:3478}
+    signal:
+      ttl-seconds: ${MRAF_WEBRTC_TTL:180}
+      max-queue: ${MRAF_WEBRTC_QUEUE:256}
+      poll-ms: ${MRAF_WEBRTC_POLL_MS:400}
+      max-payload-bytes: ${MRAF_WEBRTC_MAX_PAYLOAD:16384}
 
 logging:
   level:
