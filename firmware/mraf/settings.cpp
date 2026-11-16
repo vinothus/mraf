@@ -29,6 +29,8 @@ void settingsDefaults(Config &cfg) {
     memset(&cfg, 0, sizeof(cfg));
 
     copyStr(cfg.device_name, sizeof(cfg.device_name), DEFAULT_DEVICE_NAME);
+    copyStr(cfg.device_heading, sizeof(cfg.device_heading), DEFAULT_DEVICE_HEADING);
+    copyStr(cfg.device_subheading, sizeof(cfg.device_subheading), DEFAULT_DEVICE_SUBHEADING);
     copyStr(cfg.timezone, sizeof(cfg.timezone), DEFAULT_TIMEZONE);
     copyStr(cfg.auth_user, sizeof(cfg.auth_user), DEFAULT_AUTH_USER);
     copyStr(cfg.auth_pass, sizeof(cfg.auth_pass), DEFAULT_AUTH_PASS);
@@ -286,6 +288,8 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
     JsonObject dev = root["device"].as<JsonObject>();
     if (dev) {
         jsonString(dev["name"], tmp.device_name, sizeof(tmp.device_name), false);
+        jsonString(dev["heading"], tmp.device_heading, sizeof(tmp.device_heading), false);
+        jsonString(dev["subheading"], tmp.device_subheading, sizeof(tmp.device_subheading), false);
         jsonString(dev["timezone"], tmp.timezone, sizeof(tmp.timezone), false);
         jsonString(dev["auth_user"], tmp.auth_user, sizeof(tmp.auth_user), false);
         jsonString(dev["auth_pass"], tmp.auth_pass, sizeof(tmp.auth_pass), true);
@@ -476,6 +480,8 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
 
     JsonObject dev = root["device"].to<JsonObject>();
     dev["name"] = cfg.device_name;
+    dev["heading"] = cfg.device_heading;
+    dev["subheading"] = cfg.device_subheading;
     dev["timezone"] = cfg.timezone;
     dev["auth_user"] = cfg.auth_user;
     dev["device_id"] = cfg.device_id;

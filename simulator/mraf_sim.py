@@ -314,6 +314,8 @@ def normalize_config(cfg: dict) -> dict:
     )
     dev = out["device"]
     dev["name"] = str(dev.get("name") or "Neer Kaavalan")[:39]
+    dev["heading"] = str(dev.get("heading") or "நீர்காவலன்")[:63]
+    dev["subheading"] = str(dev.get("subheading") or "")[:95]
     dev["timezone"] = str(dev.get("timezone") or "IST-5:30")[:15]
     dev["auth_user"] = str(dev.get("auth_user") or "admin")[:19]
     dev["auth_pass"] = str(dev.get("auth_pass") or "farm1234")[:31]

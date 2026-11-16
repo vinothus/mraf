@@ -1,6 +1,8 @@
 {
   "device": {
     "name": "Neer Kaavalan",
+    "heading": "நீர்காவலன்",
+    "subheading": "",
     "timezone": "IST-5:30",
     "auth_user": "admin",
     "auth_pass": "farm1234",

@@ -21,12 +21,13 @@
 <header class="topbar">
   <div class="brand">
     <div class="mark">நீ</div>
-    <div><h1>நீர்காவலன் Neer Kaavalan</h1><p>நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center</p></div>
+    <div><h1 id="brand-heading">நீர்காவலன் Neer Kaavalan</h1><p id="brand-subheading">நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center</p></div>
   </div>
   <div class="top-actions">
     <span id="role-pill" class="pill">...</span>
     <span id="user-name" class="who"></span>
     <span id="link-pill" class="pill offline">Waiting</span>
+    <button id="signout" class="btn ghost" type="button">Sign out</button>
     <button id="theme-toggle" class="btn ghost" type="button" aria-label="Switch to light theme">Light theme</button>
     <button id="refresh" class="btn ghost" type="button">Refresh</button>
   </div>
@@ -38,6 +39,7 @@
       <button class="tab active" data-admin-tab="fleet" type="button">Fleet</button>
       <button class="tab" data-admin-tab="console" type="button">Console</button>
       <button class="tab" data-admin-tab="live" type="button">Live links</button>
+      <button class="tab" data-admin-tab="settings" type="button">Settings</button>
     </nav>
 
     <div id="admin-fleet">
@@ -97,6 +99,32 @@
       </div>
       <div id="live-grid" class="device-grid"></div>
       <p id="live-empty" class="hint" hidden>No live sessions yet. Enable WebRTC in a controller's settings and open its dashboard.</p>
+    </div>
+
+    <div id="admin-settings" hidden>
+      <div class="toolbar">
+        <div><h2>Dashboard branding</h2><p class="hint">Heading and subheading shown on the sign-in screen and in the dashboard header. Blank values restore the defaults.</p></div>
+        <button id="save-branding" class="btn primary" type="button">Save branding</button>
+      </div>
+      <article class="card branding-card">
+        <div class="form-grid">
+          <div class="field">
+            <label for="brand-heading-input">Heading</label>
+            <input id="brand-heading-input" type="text" maxlength="120" placeholder="நீர்காவலன் Neer Kaavalan">
+          </div>
+          <div class="field">
+            <label for="brand-subheading-input">Subheading</label>
+            <input id="brand-subheading-input" type="text" maxlength="200" placeholder="நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center">
+          </div>
+          <div class="field">
+            <label>Preview</label>
+            <div class="branding-preview">
+              <div class="mark">நீ</div>
+              <div><b id="brand-preview-heading">நீர்காவலன் Neer Kaavalan</b><span id="brand-preview-subheading">நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center</span></div>
+            </div>
+          </div>
+        </div>
+      </article>
     </div>
   </section>
 
@@ -270,8 +298,19 @@
 
   <section id="login-view" hidden>
     <div class="card login-card">
-      <h2>Server authentication required</h2>
-      <p class="hint">Use the admin account, or a confirmed device's server login.</p>
+      <div class="login-brand">
+        <div class="mark">நீ</div>
+        <h2 id="login-heading">நீர்காவலன் Neer Kaavalan</h2>
+        <p id="login-subheading">நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center</p>
+      </div>
+      <form id="login-form" class="login-form">
+        <h3>Server authentication required</h3>
+        <p class="hint">Use the admin account, or a confirmed device's server login.</p>
+        <input id="login-user" type="text" placeholder="Username" autocomplete="username" required>
+        <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password" required>
+        <button class="btn primary" type="submit">Sign in</button>
+        <p id="login-error" class="hint err" hidden></p>
+      </form>
     </div>
   </section>
 </main>

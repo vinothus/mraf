@@ -40,7 +40,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;
   background:rgba(13,20,18,.92);backdrop-filter:blur(8px);
   border-bottom:1px solid var(--line)}
 .brand{font-size:20px;font-weight:800;letter-spacing:.5px}
-.brand span{font-weight:500;color:var(--muted);font-size:14px;margin-left:6px}
+.brand .brand-sub{font-weight:500;color:var(--muted);font-size:14px;margin-left:6px}
 .hdr-right{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .pill{padding:5px 10px;border:1px solid var(--line);border-radius:999px;
   font-size:12px;color:var(--muted);background:var(--panel)}
@@ -190,7 +190,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
 @keyframes eq-pulse{0%,100%{box-shadow:0 0 0 rgba(69,214,138,0)}50%{box-shadow:0 0 16px rgba(69,214,138,.55)}}
 @media (prefers-reduced-motion: reduce){.eq-icon *{animation:none!important}}
 @media (max-width:640px){
-  header{padding:8px 10px;gap:8px}.brand{font-size:18px;flex:0 0 auto}.brand span{display:none}
+  header{padding:8px 10px;gap:8px}.brand{font-size:18px;flex:0 0 auto}.brand .brand-sub{display:none}
   .hdr-right{flex:1 1 auto;min-width:0;flex-wrap:nowrap;justify-content:flex-start;
     overflow-x:auto;scrollbar-width:none}
   .hdr-right::-webkit-scrollbar{display:none}
@@ -219,7 +219,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
 </head>
 <body>
 <header>
-  <div class="brand">நீர்காவலன் <span id="brand-sub">நுண் வேளாண்மை</span></div>
+  <div class="brand"><span id="brand-head">நீர்காவலன்</span> <span id="brand-sub" class="brand-sub">நுண் வேளாண்மை</span></div>
   <div class="hdr-right">
     <button id="theme-toggle" class="action" type="button" aria-label="Switch to light theme">Light theme</button>
     <span id="conn" class="pill">connecting...</span>
@@ -346,6 +346,8 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
       <div class="card">
         <h3>Device &amp; profile</h3>
         <div class="field"><label>Name</label><input id="set-name" class="wide"></div>
+        <div class="field"><label>Dashboard heading (blank = default)</label><input id="set-heading" class="wide" placeholder="நீர்காவலன்"></div>
+        <div class="field"><label>Dashboard subheading (blank = device name)</label><input id="set-subheading" class="wide" placeholder="Neer Kaavalan"></div>
         <div class="field"><label>Installation profile</label>
           <select id="set-profile" class="wide">
             <option value="agri">Agriculture (zones, valves, pumps)</option>
@@ -827,6 +829,21 @@ function renderRelays(){
   }).join("");
 }
 
+function applyBranding(){
+  const d = (config && config.device) || {};
+  const heading = (d.heading || "").trim() || "நீர்காவலன்";
+  const sub = (d.subheading || "").trim() || d.name || "நுண் வேளாண்மை";
+  const headEl = $("#brand-head");
+  if(headEl) headEl.textContent = heading;
+  const subEl = $("#brand-sub");
+  if(subEl) subEl.textContent = sub;
+  const custom = !!(d.heading && d.heading.trim() && d.heading.trim() !== "நீர்காவலன்") ||
+                 !!(d.subheading && d.subheading.trim());
+  document.title = custom
+    ? (sub ? `${heading} – ${sub}` : heading)
+    : "நீர்காவலன் Neer Kaavalan – நுண் வேளாண்மை கட்டுப்பாட்டு மையம்";
+}
+
 function renderDash(){
   if(!status) return;
   const p = status.power || {};
@@ -836,7 +853,7 @@ function renderDash(){
   const active = (status.relays||[]).filter(r=>r.on).length;
   const profile = (config && config.device && config.device.profile) || status.profile || "agri";
 
-  $("#brand-sub").textContent = (config && config.device && config.device.name) || "நுண் வேளாண்மை";
+  applyBranding();
   $("#profile-pill").textContent = profile;
   $("#profile-pill").className = "pill " + (profile === "agri" ? "ok" : "");
 
@@ -1029,6 +1046,8 @@ function fillSettings(){
   if(!config) return;
   const d = config.device||{}, w = config.wifi||{}, p = config.pump||{}, s = config.safety||{}, co = config.coap||{};
   $("#set-name").value = d.name||"";
+  $("#set-heading").value = d.heading||"";
+  $("#set-subheading").value = d.subheading||"";
   $("#set-profile").value = d.profile||"agri";
   $("#set-tz").value = d.timezone||"IST-5:30";
   $("#set-host").value = w.hostname||"mraf";
@@ -1124,6 +1143,8 @@ function buildConfig(){
   cfg.recurring = readRecurring();
 
   cfg.device.name = $("#set-name").value.trim() || "Neer Kaavalan";
+  cfg.device.heading = $("#set-heading").value.trim();
+  cfg.device.subheading = $("#set-subheading").value.trim();
   cfg.device.profile = $("#set-profile").value;
   cfg.device.timezone = $("#set-tz").value.trim() || "IST-5:30";
   cfg.device.auth_user = $("#set-user").value.trim() || "admin";
@@ -1183,6 +1204,7 @@ async function loadConfig(){
     config = await api("/api/config");
     schedulesRendered = false;
     recurringRendered = false;
+    applyBranding();
     if(!$("#tab-sched").hidden) renderSchedules();
     if(!$("#tab-rec").hidden) renderRecurring();
     fillSettings();

@@ -12,6 +12,8 @@
       "additionalProperties": true,
       "properties": {
         "name": {"type": "string", "maxLength": 39},
+        "heading": {"type": "string", "maxLength": 63, "default": "நீர்காவலன்"},
+        "subheading": {"type": "string", "maxLength": 95, "description": "Empty falls back to the device name."},
         "timezone": {"type": "string", "maxLength": 15, "default": "IST-5:30"},
         "auth_user": {"type": "string", "maxLength": 19, "default": "admin"},
         "auth_pass": {"type": "string", "maxLength": 31, "description": "Write-only; omitted from GET responses."}

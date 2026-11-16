@@ -75,6 +75,11 @@ static const bool MAINS_SENSE_ACTIVE_HIGH = true;
 // Defaults
 // ---------------------------------------------------------------------------
 static const char *DEFAULT_DEVICE_NAME = "Neer Kaavalan";
+// Dashboard branding. The heading is shown at the top-left of the dashboard;
+// an empty subheading falls back to the device name so the default header is
+// unchanged ("நீர்காவலன்" + "Neer Kaavalan").
+static const char *DEFAULT_DEVICE_HEADING = "நீர்காவலன்";
+static const char *DEFAULT_DEVICE_SUBHEADING = "";
 static const char *DEFAULT_TIMEZONE = "IST-5:30";   // POSIX TZ for UTC+05:30
 static const char *DEFAULT_AUTH_USER = "admin";
 static const char *DEFAULT_AUTH_PASS = "farm1234";

@@ -123,6 +123,8 @@ struct WebRtcConfig {
 
 struct Config {
     char device_name[40];
+    char device_heading[64];            // dashboard heading
+    char device_subheading[96];         // dashboard subheading (empty = name)
     char timezone[16];
     char auth_user[20];
     char auth_pass[32];

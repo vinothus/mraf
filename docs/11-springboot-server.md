@@ -116,6 +116,14 @@ The dashboard is a single-page app served from `static/`:
 - **Assistant** tab: offline grammar chat (the same deterministic parser the
   ESP32 runs) with quick-command buttons; commands are queued over CoAP.
 - **Activity** tab: ACKs, events, queue inspection and cancellation.
+- **Settings** tab (admin only): dashboard branding. The heading and subheading
+  are stored in the `server_settings` table and are also shown on the sign-in
+  card, in the app header and in the page title. Blank fields restore the
+  default `நீர்காவலன் Neer Kaavalan` / `நுண் வேளாண்மை கட்டுப்பாட்டு மையம் –
+  Smart Agriculture Control Center` text. The device dashboard exposes the same
+  two fields in its own Settings page (`device.heading` and
+  `device.subheading`); an empty device subheading falls back to the device
+  name.
 - **Theme**: a header button switches the whole dashboard between the dark and
   bright (light) themes; the choice is stored in `localStorage` and applied
   before first paint so reloads do not flash the other theme.
@@ -131,11 +139,15 @@ out of its own network.
 
 ## HTTP API
 
-All endpoints except `/api/health` require HTTP Basic auth.
+All endpoints except `/api/health` and `GET /api/branding` require HTTP Basic
+auth. Branding is public so the sign-in card can render it before the user
+authenticates.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | `GET` | `/api/health` | public | Liveness, device count and any-online flag |
+| `GET` | `/api/branding` | public | Dashboard heading and subheading |
+| `PUT` | `/api/branding` | admin | Update heading and subheading (blank = defaults) |
 | `GET` | `/api/me` | any | Current username, role and owned device |
 | `GET` | `/api/devices` | admin | Fleet overview |
 | `GET` | `/api/devices/{id}` | admin or owner | Full device state, config, queue, ACKs, events |
@@ -278,6 +290,14 @@ MRAF_VIDEO_DIR=/tmp/mraf-video/raw \
 
 The script writes a WebM file under `MRAF_VIDEO_DIR`; encode to MP4 with
 `ffmpeg -i raw.webm -c:v libx264 -pix_fmt yuv420p -movflags +faststart demo.mp4`.
+
+The configurable heading and subheading are demonstrated in
+[demo/customheaderandsubheader.mp4](demo/customheaderandsubheader.mp4): the
+ESP32 dashboard and the server UI side by side, starting from the defaults,
+saving custom values in each Settings page, then reloading / signing in again
+to show the saved text. Record it with
+`scripts/record_custom_header_demo.py` against a running native firmware
+(`MRAF_HTTP_PORT=18090`) and server (`MRAF_HTTP_PORT=18085`).
 
 ## Matter
 

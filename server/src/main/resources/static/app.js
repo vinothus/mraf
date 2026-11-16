@@ -27,6 +27,11 @@ let consoleDeviceId = null;
 let consoleData = null;
 let consoleRendered = "";
 let liveData = null;
+let branding = null;
+let authHeader = null;
+let refreshTimer = null;
+
+try { authHeader = sessionStorage.getItem("mraf-auth"); } catch (_) {}
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -65,7 +70,11 @@ function showToast(message, error = false) {
 async function api(path, options = {}) {
   const res = await fetch(path, {
     credentials: "same-origin",
-    headers: {"Content-Type": "application/json", ...(options.headers || {})},
+    headers: {
+      "Content-Type": "application/json",
+      ...(authHeader ? {Authorization: authHeader} : {}),
+      ...(options.headers || {})
+    },
     ...options
   });
   let body = null;
@@ -114,14 +123,80 @@ function optionList(list, value) {
   return list.map(v => `<option value="${v}" ${v === value ? "selected" : ""}>${v}</option>`).join("");
 }
 
+// ---------------------------------------------------------------- branding
+const DEFAULT_HEADING = "நீர்காவலன் Neer Kaavalan";
+const DEFAULT_SUBHEADING =
+  "நுண் வேளாண்மை கட்டுப்பாட்டு மையம் – Smart Agriculture Control Center";
+
+function applyBranding(data) {
+  if (data) branding = data;
+  const b = branding || {};
+  const heading = (b.heading || "").trim() || DEFAULT_HEADING;
+  const subheading = (b.subheading || "").trim() || DEFAULT_SUBHEADING;
+  for (const sel of ["#brand-heading", "#login-heading", "#brand-preview-heading"]) {
+    const el = $(sel); if (el) el.textContent = heading;
+  }
+  for (const sel of ["#brand-subheading", "#login-subheading", "#brand-preview-subheading"]) {
+    const el = $(sel); if (el) el.textContent = subheading;
+  }
+  document.title = `${heading} – ${subheading}`;
+}
+
+async function loadBranding() {
+  try {
+    const res = await fetch("/api/branding", {cache: "no-store", credentials: "omit"});
+    if (res.ok) applyBranding(await res.json());
+  } catch (_) { /* keep the built-in defaults */ }
+}
+
+function fillBrandingForm() {
+  const b = branding || {};
+  $("#brand-heading-input").value = b.heading || "";
+  $("#brand-subheading-input").value = b.subheading || "";
+}
+
+async function saveBranding() {
+  const heading = $("#brand-heading-input").value.trim();
+  const subheading = $("#brand-subheading-input").value.trim();
+  try {
+    const data = await api("/api/branding", {
+      method: "PUT",
+      body: JSON.stringify({heading, subheading})
+    });
+    applyBranding(data);
+    fillBrandingForm();
+    showToast("Branding saved");
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+function showLogin() {
+  $("#admin-view").hidden = true;
+  $("#device-view").hidden = true;
+  $("#login-view").hidden = false;
+  $("#signout").hidden = true;
+  $("#role-pill").textContent = "...";
+  $("#role-pill").className = "pill";
+  $("#user-name").textContent = "";
+  $("#login-error").hidden = true;
+}
+
 // ---------------------------------------------------------------- bootstrap
 async function init() {
+  await loadBranding();
   try {
     me = await api("/api/me");
   } catch (e) {
-    $("#login-view").hidden = false;
+    showLogin();
     return;
   }
+  await enterApp();
+}
+
+async function enterApp() {
+  $("#login-view").hidden = true;
+  $("#signout").hidden = false;
   $("#user-name").textContent = me.username;
   $("#role-pill").textContent = me.role === "admin" ? "Admin" : "Device user";
   $("#role-pill").className = "pill " + (me.role === "admin" ? "info" : "on");
@@ -132,9 +207,10 @@ async function init() {
   } else if (me.deviceId) {
     await openDevice(me.deviceId);
   } else {
-    $("#login-view").hidden = false;
+    showLogin();
+    return;
   }
-  setInterval(refresh, 2000);
+  if (!refreshTimer) refreshTimer = setInterval(refresh, 2000);
 }
 
 async function refresh() {
@@ -200,6 +276,8 @@ function switchAdminTab(name) {
   $("#admin-fleet").hidden = name !== "fleet";
   $("#admin-console").hidden = name !== "console";
   $("#admin-live").hidden = name !== "live";
+  $("#admin-settings").hidden = name !== "settings";
+  if (name === "settings") { fillBrandingForm(); }
   if (name === "live") { loadLiveLinks(); }
   if (name === "console") {
     renderConsoleDevices();
@@ -802,6 +880,7 @@ document.addEventListener("click", async ev => {
   const cdev = t.closest("[data-console-device]");
   if (cdev) { await selectConsoleDevice(cdev.dataset.consoleDevice); return; }
   if (t.closest("#live-refresh")) { await loadLiveLinks(); showToast("Refreshed"); return; }
+  if (t.closest("#save-branding")) { await saveBranding(); return; }
   const dropBtn = t.closest("[data-drop-session]");
   if (dropBtn) { ev.stopPropagation(); await dropSession(dropBtn.dataset.dropSession); return; }
   if (t.closest("#live-grid")) { return; }
@@ -905,4 +984,40 @@ $("#theme-toggle").addEventListener("click", () => {
 });
 $("#chat-form").addEventListener("submit", ev => { ev.preventDefault(); sendChat(); });
 $("#console-form").addEventListener("submit", ev => { ev.preventDefault(); sendConsoleCommand(); });
+$("#signout").addEventListener("click", () => {
+  authHeader = null;
+  try { sessionStorage.removeItem("mraf-auth"); } catch (_) {}
+  me = null;
+  deviceId = null;
+  snap = null;
+  overview = null;
+  adminTab = "fleet";
+  showLogin();
+});
+$("#login-form").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const user = $("#login-user").value.trim();
+  const pass = $("#login-pass").value;
+  const header = "Basic " + btoa(`${user}:${pass}`);
+  try {
+    const res = await fetch("/api/me", {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {Authorization: header}
+    });
+    if (!res.ok) {
+      throw new Error(res.status === 401 ? "Invalid username or password"
+        : `${res.status} ${res.statusText}`);
+    }
+    me = await res.json();
+    authHeader = header;
+    try { sessionStorage.setItem("mraf-auth", header); } catch (_) {}
+    $("#login-pass").value = "";
+    await enterApp();
+  } catch (e) {
+    const err = $("#login-error");
+    err.textContent = e.message;
+    err.hidden = false;
+  }
+});
 init();

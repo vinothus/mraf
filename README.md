@@ -22,7 +22,9 @@ alive on a 12.8 V LiFePO4 battery while all relay coils drop out during a power 
   float switches directly in the contactor coil circuit.
 - Wi-Fi station mode with AP fallback, mDNS (`http://mraf.local`), HTTP Basic
   auth, NTP plus DS3231 RTC, and a responsive single-page dashboard with
-  dark/bright theme selection that is remembered in the browser.
+  dark/bright theme selection that is remembered in the browser. The dashboard
+  heading and subheading are editable in Settings and fall back to the original
+  text when left blank.
 - LiFePO4 controller battery, charged when mains is present; relay coils are
   on a separate mains-derived 5 V SMPS so a power cut always de-energises every
   load.
@@ -110,7 +112,11 @@ controls, schedules, recurring rules, WireGuard tunnel provisioning, grammar
 chat and activity). The dashboard has a dark/light theme toggle; the choice is
 remembered in the browser. The remote console is shown in
 [docs/demo/mraf-server-console-demo.mp4](docs/demo/mraf-server-console-demo.mp4)
-(list the connected controllers, attach to one and run shell commands).
+(list the connected controllers, attach to one and run shell commands). The
+dashboard heading and subheading are configurable in the admin Settings tab and
+on the device dashboard's Settings page; the built-in text is used until they
+are changed. The recorded walkthrough is at
+[docs/demo/customheaderandsubheader.mp4](docs/demo/customheaderandsubheader.mp4).
 
 ## Quick start: peer-to-peer dashboard (WebRTC)
 
