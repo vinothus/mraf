@@ -124,7 +124,11 @@ links" tab shows the connected peers. See
 [docs/demo/mraf-server-webrtc-demo.mp4](docs/demo/mraf-server-webrtc-demo.mp4)
 (controller dashboard on the left, server admin on the right: the browser opens
 the data channel, relay commands run over it, and the server sees only link
-state, RTT and byte counters).
+state, RTT and byte counters). The device-side recording is at
+[docs/demo/mraf-esp32-webrtc-ui-demo.mp4](docs/demo/mraf-esp32-webrtc-ui-demo.mp4):
+the full ESP32 dashboard served by the firmware's HTTP server, then the same
+relay, pump, schedule, chat and event screens driven over the WebRTC data
+channel by the native_sim build of the firmware.
 
 ## Quick start: Matter bridge
 

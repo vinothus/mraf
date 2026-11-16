@@ -261,6 +261,30 @@ The simulator also serves `GET /api/webrtc` (settings) and
 `GET /api/webrtc/status` for the dashboard. The `--token` flag sets the shared
 signalling token (`coap.token`).
 
+## Demo recording
+
+[demo/mraf-esp32-webrtc-ui-demo.mp4](demo/mraf-esp32-webrtc-ui-demo.mp4) shows
+the device UI with the transport enabled, not the server dashboard. It is the
+`native_sim` build of the ESP32 firmware, so the HTML/JS in `webui.h`, the REST
+handlers and `webrtc_peer.cpp` are the same code that runs on the ESP32. The
+recording covers the HTTP-served dashboard, relay control, daily and recurring
+schedules, the WebRTC settings and Live P2P tab, WireGuard state, relay and
+pump commands over the data channel, offline grammar chat, and the event log.
+Regenerate it with `scripts/record_esp32_webrtc_ui_demo.py` while the
+native-webrtc firmware and Spring Boot control plane are running.
+
+To check that a WebRTC ESP32 image still contains the local UI and API, inspect
+the ELF:
+
+```bash
+nm firmware/zephyr/build/esp32-webrtc/zephyr/zephyr.elf |
+  grep -E 'http_server_start|mraf_api_start|mraf_webrtc_start|mraf_peer_start'
+```
+
+`webui.h` is generated into `firmware/zephyr/build/esp32-webrtc/webui.h` and the
+only difference from the default ESP32 `.config` is the `CONFIG_MRAF_WEBRTC*`
+block, so enabling the transport does not remove any other feature.
+
 ## Gotchas
 
 - **SCTP padding.** Every SCTP chunk must be padded to a 4-byte boundary inside
