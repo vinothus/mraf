@@ -111,13 +111,18 @@ struct WireGuardConfig {
 };
 
 // Peer-to-peer link settings. The device keeps the control-plane URL and an
-// optional explicit STUN URL in NVS so it can resume the handshake after a
-// reboot without waiting for the next server poll. The STUN URL is normally
-// discovered from GET <server>/api/webrtc/config and only cached here.
+// optional explicit STUN/TURN URL in NVS so it can resume the handshake after
+// a reboot without waiting for the next server poll. STUN and TURN are
+// normally discovered from GET <server>/api/webrtc/config and only cached
+// here. TURN is the relay path used when a direct/STUN candidate cannot be
+// reached (for example behind symmetric NAT or the QEMU slirp network).
 struct WebRtcConfig {
     bool enabled;                       // peer link wanted by the operator
     char server[64];                    // control-plane base URL, e.g. http://10.0.0.5:8085
     char stun[64];                      // explicit STUN override, e.g. stun:1.2.3.4:3478
+    char turn[96];                      // explicit TURN override, e.g. turn:1.2.3.4:3478
+    char turn_user[48];                 // TURN long-term credential username
+    char turn_pass[64];                 // TURN long-term credential password
     uint16_t poll_ms;                   // signalling poll interval
 };
 

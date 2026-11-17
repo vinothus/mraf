@@ -22,6 +22,10 @@ extern "C" {
 void mraf_webrtc_init(void);
 void mraf_webrtc_start(void);
 
+// Forget the cached control-plane config so the next poll re-reads
+// GET /api/webrtc/config. Called when the operator saves new WebRTC settings.
+void mraf_webrtc_config_changed(void);
+
 // Describe the peer link for the /api/status document (also what the server
 // sees in the CoAP status payload).
 void mraf_webrtc_build_status(JsonObject out);

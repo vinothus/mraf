@@ -23,6 +23,7 @@
 #include "remote.h"
 #include "settings.h"
 #include "webui.h"
+#include "webrtc.h"
 
 enum RouteId {
     R_ROOT,
@@ -291,11 +292,26 @@ static int h_webrtc(Route &, const struct http_request_ctx *,
     d["enabled"] = g_cfg.webrtc.enabled;
     d["server"] = g_cfg.webrtc.server;
     d["stun"] = g_cfg.webrtc.stun;
+    d["turn"] = g_cfg.webrtc.turn;
+    d["turn_user"] = g_cfg.webrtc.turn_user;
+    d["turn_pass"] = g_cfg.webrtc.turn_pass;
     d["poll_ms"] = g_cfg.webrtc.poll_ms;
     d["device_id"] = g_cfg.device_id;
     d["token"] = g_cfg.coap_token;
     k_mutex_unlock(&g_state_lock);
     d["transport"] = "datachannel";
+
+    struct mraf_ice_info ice;
+    mraf_platform_webrtc_ice_info(&ice);
+    JsonObject iceOut = d["ice"].to<JsonObject>();
+    iceOut["stun_ok"] = ice.stun_ok;
+    iceOut["srflx"] = ice.srflx_addr;
+    iceOut["relay"] = ice.relay_addr;
+    iceOut["relay_allocated"] = ice.turn_allocated;
+    iceOut["path"] = ice.relay_path ? "relay" : "";
+    if (ice.turn_error[0]) {
+        iceOut["turn_error"] = ice.turn_error;
+    }
     sendJson(d, 200, response);
     return 0;
 }
@@ -424,11 +440,26 @@ static int h_config_post(Route &route, const struct http_request_ctx *,
              strcmp(old.auth_user, g_cfg.auth_user) != 0 ||
              strcmp(old.auth_pass, g_cfg.auth_pass) != 0;
 
+    // A new control-plane URL or new STUN/TURN overrides must be re-read from
+    // the server; otherwise the peer keeps the previous advertisement until
+    // the next reboot.
+    bool wrtc_changed = old.webrtc.enabled != g_cfg.webrtc.enabled ||
+             strcmp(old.webrtc.server, g_cfg.webrtc.server) != 0 ||
+             strcmp(old.webrtc.stun, g_cfg.webrtc.stun) != 0 ||
+             strcmp(old.webrtc.turn, g_cfg.webrtc.turn) != 0 ||
+             strcmp(old.webrtc.turn_user, g_cfg.webrtc.turn_user) != 0 ||
+             strcmp(old.webrtc.turn_pass, g_cfg.webrtc.turn_pass) != 0 ||
+             old.webrtc.poll_ms != g_cfg.webrtc.poll_ms;
+
     settingsSave(g_cfg);
     g_ctrl.applyConfig(g_cfg);
     mraf_set_timezone(g_cfg.timezone);
     settingsToJson(g_cfg, out, false);
     k_mutex_unlock(&g_state_lock);
+
+    if (wrtc_changed) {
+        mraf_webrtc_config_changed();
+    }
 
     out["ok"] = true;
     out["reboot_required"] = reboot;

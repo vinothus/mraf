@@ -46,6 +46,8 @@ class WebRtcControllerTest {
                 .andExpect(jsonPath("$.transport").value("datachannel"))
                 .andExpect(jsonPath("$.device_id").value(DEVICE))
                 .andExpect(jsonPath("$.iceServers[0].urls").value("stun:stun.example.test:13478"))
+                .andExpect(jsonPath("$.iceServers.length()").value(1))
+                .andExpect(jsonPath("$.turn").doesNotExist())
                 .andExpect(jsonPath("$.signaling.pollMs").isNumber())
                 .andExpect(jsonPath("$.maxPayloadBytes").isNumber());
     }

@@ -24,6 +24,69 @@ public class WebRtcProperties {
 
     private final Stun stun = new Stun();
     private final Signal signal = new Signal();
+    private final Turn turn = new Turn();
+
+    public static class Turn {
+        /** Advertise a TURN relay alongside STUN. */
+        private boolean enabled = false;
+        /** Host advertised to clients (blank = use request host). */
+        private String host = "";
+        private int port = 3478;
+        /** Optional full turn: URL; overrides host/port when set. */
+        private String url = "";
+        /** Long-term credential username. */
+        private String username = "";
+        /** Long-term credential password. */
+        private String credential = "";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getHost() {
+            return host;
+        }
+
+        public void setHost(String host) {
+            this.host = host;
+        }
+
+        public int getPort() {
+            return port;
+        }
+
+        public void setPort(int port) {
+            this.port = port;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public String getUsername() {
+            return username;
+        }
+
+        public void setUsername(String username) {
+            this.username = username;
+        }
+
+        public String getCredential() {
+            return credential;
+        }
+
+        public void setCredential(String credential) {
+            this.credential = credential;
+        }
+    }
 
     public static class Stun {
         private boolean enabled = true;
@@ -115,6 +178,10 @@ public class WebRtcProperties {
 
     public Stun getStun() {
         return stun;
+    }
+
+    public Turn getTurn() {
+        return turn;
     }
 
     public Signal getSignal() {

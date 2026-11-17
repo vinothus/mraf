@@ -41,7 +41,7 @@
 #define WRT_SDP_BUF 2048
 #define WRT_MSG_MAX CONFIG_MRAF_WEBRTC_MSG_MAX
 #define WRT_REQ_MAX 4096
-#define WRT_STACK_SIZE 5120
+#define WRT_STACK_SIZE 6144
 #else
 // The signalling client stays linked but idle when the transport is disabled,
 // so its buffers do not need to reserve scarce DRAM on those builds.
@@ -175,13 +175,18 @@ static void dechunkBody(char *body)
 }
 
 // Perform one request and return the HTTP status code (or a negative socket
-// error). The response body is copied into resp (may be empty). The connection
-// is closed by the client, so the body is read until EOF.
+// error). The response body is compacted to the start of the shared buffer and
+// returned through out_body (may be empty). The connection is closed by the
+// client, so the body is read until EOF. Reusing one buffer for the whole HTTP
+// exchange keeps two 5 KiB staging areas out of ESP32 DRAM.
+static char g_httpBuf[WRT_HTTP_BUF];
+
 static int httpRequest(const char *method, const Url &url, const char *token,
-                       const char *body, char *resp, size_t cap, int timeout_ms)
+                       const char *body, char **out_body, int timeout_ms)
 {
-    if (resp && cap) {
-        resp[0] = '\0';
+    char *rx = g_httpBuf;
+    if (out_body) {
+        *out_body = nullptr;
     }
 
     struct zsock_addrinfo hints = {};
@@ -229,10 +234,9 @@ static int httpRequest(const char *method, const Url &url, const char *token,
         return -5;
     }
 
-    static char rx[WRT_HTTP_BUF];
     size_t total = 0;
     int64_t start = k_uptime_get();
-    while (k_uptime_get() - start < (int64_t)timeout_ms && total < sizeof(rx) - 1) {
+    while (k_uptime_get() - start < (int64_t)timeout_ms && total < sizeof(g_httpBuf) - 1) {
         struct zsock_pollfd pfd = {.fd = fd, .events = ZSOCK_POLLIN};
         int pr = zsock_poll(&pfd, 1, 100);
         if (pr < 0) {
@@ -241,7 +245,7 @@ static int httpRequest(const char *method, const Url &url, const char *token,
         if (pr == 0) {
             continue;
         }
-        int got = zsock_recv(fd, rx + total, sizeof(rx) - 1 - total, 0);
+        int got = zsock_recv(fd, rx + total, sizeof(g_httpBuf) - 1 - total, 0);
         if (got <= 0) {
             break;
         }
@@ -255,14 +259,18 @@ static int httpRequest(const char *method, const Url &url, const char *token,
         code = atoi(rx + 9);
     }
 
-    if (resp && cap) {
+    if (out_body) {
         char *sep = strstr(rx, "\r\n\r\n");
         if (sep) {
-            copyWrt(resp, cap, sep + 4);
-            if (strstr(rx, "Transfer-Encoding: chunked") ||
-                strstr(rx, "transfer-encoding: chunked")) {
-                dechunkBody(resp);
+            bool chunked = strstr(rx, "Transfer-Encoding: chunked") ||
+                           strstr(rx, "transfer-encoding: chunked");
+            char *bodyp = sep + 4;
+            size_t blen = strlen(bodyp);
+            memmove(rx, bodyp, blen + 1);
+            if (chunked) {
+                dechunkBody(rx);
             }
+            *out_body = rx;
         }
     }
     return code;
@@ -271,10 +279,10 @@ static int httpRequest(const char *method, const Url &url, const char *token,
 static bool httpJson(const char *method, const Url &url, const char *token,
                      const char *body, JsonDocument &out)
 {
-    static char resp[WRT_HTTP_BUF];
-    int code = httpRequest(method, url, token, body, resp, sizeof(resp), 1500);
+    char *resp = nullptr;
+    int code = httpRequest(method, url, token, body, &resp, 1500);
     g_lastCode = code;
-    if (code < 200 || code >= 300 || !resp[0]) {
+    if (code < 200 || code >= 300 || !resp || !resp[0]) {
         return false;
     }
     DeserializationError err = deserializeJson(out, resp);
@@ -330,10 +338,36 @@ static void fetchConfig(const Ctx &ctx)
         port = stun["port"] | 0;
     }
 
+    const char *turnHost = "";
+    int turnPort = 0;
+    const char *turnUser = "";
+    const char *turnPass = "";
+    JsonObject turn = doc["turn"].as<JsonObject>();
+    if (turn) {
+        turnHost = turn["host"] | "";
+        turnPort = turn["port"] | 0;
+        turnUser = turn["username"] | "";
+        turnPass = turn["credential"] | "";
+    }
+
     k_mutex_lock(&g_state_lock, K_FOREVER);
     if (host[0] && port > 0 && !g_cfg.webrtc.stun[0]) {
         snprintf(g_cfg.webrtc.stun, sizeof(g_cfg.webrtc.stun),
                  "stun:%s:%d", host, port);
+    }
+    if (turnHost[0] && turnPort > 0) {
+        if (!g_cfg.webrtc.turn[0]) {
+            snprintf(g_cfg.webrtc.turn, sizeof(g_cfg.webrtc.turn),
+                     "turn:%s:%d", turnHost, turnPort);
+        }
+        if (!g_cfg.webrtc.turn_user[0] && turnUser[0]) {
+            copyWrt(g_cfg.webrtc.turn_user, sizeof(g_cfg.webrtc.turn_user),
+                    turnUser);
+        }
+        if (!g_cfg.webrtc.turn_pass[0] && turnPass[0]) {
+            copyWrt(g_cfg.webrtc.turn_pass, sizeof(g_cfg.webrtc.turn_pass),
+                    turnPass);
+        }
     }
     g_configFetched = true;
     g_lastError[0] = '\0';
@@ -415,6 +449,14 @@ static void pollSignals(const Ctx &ctx)
         return;
     }
 
+    // The registry is in memory, so a control-plane restart resets the
+    // per-device sequence to zero. Without this the device would keep a higher
+    // cursor and silently ignore every new offer until it reboots.
+    long head = doc["seq"] | 0L;
+    if (head < g_since) {
+        g_since = head;
+    }
+
     JsonArray signals = doc["signals"].as<JsonArray>();
     for (JsonVariant v : signals) {
         if (!v.is<JsonObject>()) {
@@ -428,6 +470,11 @@ static void pollSignals(const Ctx &ctx)
         const char *type = s["type"] | "";
         if (strcmp(type, "offer") == 0) {
             handleOffer(ctx, s["sdp"] | "");
+        } else if (strcmp(type, "candidate") == 0) {
+            const char *cand = s["candidate"] | "";
+            if (cand[0]) {
+                mraf_platform_webrtc_add_candidate(cand);
+            }
         } else if (strcmp(type, "bye") == 0 || strcmp(type, "close") == 0) {
             mraf_platform_webrtc_stop();
             k_mutex_lock(&g_state_lock, K_FOREVER);
@@ -551,7 +598,10 @@ static void dispatch(const char *raw)
         }
         bool reboot = false;
         if (haveBody) {
-            Config old = g_cfg;
+            // ~2.6 KiB; a stack copy here pushes the signalling thread past
+            // its budget while the data channel is live.
+            static Config old;
+            old = g_cfg;
             String error;
             if (!settingsFromJson(bodyDoc, g_cfg, error)) {
                 g_cfg = old;
@@ -713,7 +763,9 @@ static void webrtcThread(void *, void *, void *)
 
         // Drain one inbound data-channel message (dispatch mutates state).
         bool have_rx = false;
-        char rx[WRT_REQ_MAX];
+        // Static: this is the only writer, and a 4 KiB stack buffer would crowd
+        // the signalling thread next to the HTTP/JSON and DTLS setup frames.
+        static char rx[WRT_REQ_MAX];
         k_mutex_lock(&g_state_lock, K_FOREVER);
         if (g_rxPending) {
             g_rxPending = false;
@@ -788,6 +840,7 @@ void mraf_webrtc_build_status(JsonObject out)
     out["enabled"] = g_cfg.webrtc.enabled;
     out["server"] = g_cfg.webrtc.server;
     out["stun"] = g_cfg.webrtc.stun;
+    out["turn"] = g_cfg.webrtc.turn;
     out["poll_ms"] = g_cfg.webrtc.poll_ms;
     out["transport"] = "datachannel";
     out["available"] = mraf_platform_webrtc_available();
@@ -803,6 +856,17 @@ void mraf_webrtc_build_status(JsonObject out)
     out["last_error"] = g_lastError;
     out["last_poll"] = (uint32_t)g_lastPollAt;
     out["device_id"] = g_cfg.device_id;
+
+    struct mraf_ice_info ice;
+    mraf_platform_webrtc_ice_info(&ice);
+    out["stun_ok"] = ice.stun_ok;
+    out["srflx"] = ice.srflx_addr;
+    out["relay"] = ice.relay_addr;
+    out["relay_allocated"] = ice.turn_allocated;
+    out["path"] = ice.relay_path ? "relay" : (g_connected ? "direct" : "");
+    if (ice.turn_error[0]) {
+        out["turn_error"] = ice.turn_error;
+    }
 }
 
 void mraf_webrtc_start(void)
@@ -811,4 +875,9 @@ void mraf_webrtc_start(void)
                     K_THREAD_STACK_SIZEOF(g_webrtc_stack), webrtcThread,
                     nullptr, nullptr, nullptr, K_PRIO_PREEMPT(8), 0, K_NO_WAIT);
     k_thread_name_set(&g_webrtc_thread, "mraf_webrtc");
+}
+
+void mraf_webrtc_config_changed(void)
+{
+    g_configFetched = false;
 }

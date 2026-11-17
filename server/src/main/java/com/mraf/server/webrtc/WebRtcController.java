@@ -26,8 +26,9 @@ import java.util.List;
  *
  * <p>Responsibilities:
  * <ul>
- *   <li>{@code GET /config} — hand the browser the STUN URL and signalling
- *       parameters (public, no secrets).</li>
+ *   <li>{@code GET /config} — hand the browser and the device the STUN/TURN
+ *       URLs and signalling parameters. TURN credentials are shared with both
+ *       peers so either side can allocate a relay.</li>
  *   <li>{@code POST /signal} / {@code GET /signal} — relay SDP and ICE between
  *       the browser and the controller. This is the only WebRTC traffic we see;
  *       it carries no dashboard data.</li>
@@ -79,6 +80,34 @@ public class WebRtcController {
         stunNode.put("host", host);
         stunNode.put("port", port);
         stunNode.put("running", stun.isRunning());
+
+        WebRtcProperties.Turn turn = props.getTurn();
+        if (turn.isEnabled()) {
+            String turnHost = turn.getHost();
+            if (turnHost == null || turnHost.isBlank()) {
+                turnHost = host;
+            }
+            String turnUrl = turn.getUrl();
+            if (turnUrl == null || turnUrl.isBlank()) {
+                turnUrl = "turn:" + turnHost + ":" + turn.getPort();
+            }
+            ObjectNode server = ice.addObject();
+            server.put("urls", turnUrl);
+            if (!turn.getUsername().isBlank()) {
+                server.put("username", turn.getUsername());
+            }
+            if (!turn.getCredential().isBlank()) {
+                server.put("credential", turn.getCredential());
+            }
+            ObjectNode turnNode = out.putObject("turn");
+            turnNode.put("enabled", true);
+            turnNode.put("url", turnUrl);
+            turnNode.put("host", turnHost);
+            turnNode.put("port", turn.getPort());
+            turnNode.put("username", turn.getUsername());
+            turnNode.put("credential", turn.getCredential());
+        }
+
         ObjectNode sig = out.putObject("signaling");
         sig.put("signalUrl", "/api/webrtc/signal");
         sig.put("reportUrl", "/api/webrtc/report");

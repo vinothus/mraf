@@ -122,10 +122,12 @@ are changed. The recorded walkthrough is at
 
 The device dashboard can read and write over a **direct, encrypted WebRTC data
 channel** between the browser and the controller, so live data never passes
-through the server. The server only runs a STUN server and relays the SDP/ICE
-handshake. Enable it in the device settings (or `webrtc.enabled` in the config)
-and point `webrtc.server` at the Spring Boot control plane. The admin "Live
-links" tab shows the connected peers. See
+through the server. The server runs a STUN server, can advertise a TURN relay,
+and relays the SDP/ICE handshake; the device gathers host, STUN (srflx) and TURN
+(relay) candidates and falls back to the relay when STUN cannot produce a
+usable path. Enable it in the device settings (or `webrtc.enabled` in the
+config) and point `webrtc.server` at the Spring Boot control plane. The admin
+"Live links" tab shows the connected peers. See
 [docs/13-webrtc.md](docs/13-webrtc.md). A recorded walkthrough is at
 [docs/demo/mraf-server-webrtc-demo.mp4](docs/demo/mraf-server-webrtc-demo.mp4)
 (controller dashboard on the left, server admin on the right: the browser opens
@@ -134,7 +136,10 @@ state, RTT and byte counters). The device-side recording is at
 [docs/demo/mraf-esp32-webrtc-ui-demo.mp4](docs/demo/mraf-esp32-webrtc-ui-demo.mp4):
 the full ESP32 dashboard served by the firmware's HTTP server, then the same
 relay, pump, schedule, chat and event screens driven over the WebRTC data
-channel by the native_sim build of the firmware.
+channel by the native_sim build of the firmware. The TURN fallback proof is at
+[docs/demo/mraf-qemu-turn-fallback.mp4](docs/demo/mraf-qemu-turn-fallback.mp4):
+the ESP32-class QEMU image connects over STUN, then reconnects through TURN with
+a dead STUN server, and finally with a relay-only (`relay ↔ relay`) ICE pair.
 
 ## Quick start: Matter bridge
 

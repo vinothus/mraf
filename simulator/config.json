@@ -62,6 +62,9 @@
     "enabled": false,
     "server": "",
     "stun": "",
+    "turn": "",
+    "turn_user": "",
+    "turn_pass": "",
     "poll_ms": 400
   },
   "safety": {

@@ -1,8 +1,14 @@
 // Portable DTLS/SCTP data-channel transport (see webrtc_peer.h).
 //
 // Layout:
-//   * ICE-lite: a STUN responder on the same UDP port as DTLS, plus a one-shot
-//     srflx lookup against the configured STUN server.
+//   * ICE-lite: a STUN responder on the same UDP port as DTLS, a one-shot
+//     srflx lookup against the configured STUN server, and an optional TURN
+//     allocation (RFC 5766) that gives the device a relayed candidate. TURN is
+//     used both ways: incoming peer payloads arrive in Data Indications and
+//     outgoing payloads are wrapped in Send Indications, all on the same
+//     socket. If STUN cannot produce a reachable path the relay candidate is
+//     still advertised, which is what makes the link work behind symmetric NAT
+//     and on the QEMU slirp network.
 //   * DTLS 1.2 server: mbedTLS with an embedded ECDSA P-256 identity. The
 //     fingerprint is computed from the DER certificate and advertised in the
 //     answer SDP, which is all a browser verifies.
@@ -48,6 +54,36 @@
 #define PEER_PORT 5000
 #define STUN_MAGIC 0x2112A442u
 #define STUN_CRC_XOR 0x5354554Eu
+
+// STUN/TURN message types used by the relay client.
+#define STUN_BINDING_REQ 0x0001
+#define TURN_ALLOCATE_REQ 0x0003
+#define TURN_REFRESH_REQ 0x0004
+#define TURN_SEND_IND 0x0016
+#define TURN_DATA_IND 0x0017
+#define TURN_PERM_REQ 0x0008
+#define TURN_ALLOCATE_OK 0x0103
+#define TURN_REFRESH_OK 0x0104
+#define TURN_PERM_OK 0x0108
+#define TURN_ERROR 0x0113
+// Attributes.
+#define STUN_ATTR_USERNAME 0x0006
+#define STUN_ATTR_MESSAGE_INTEGRITY 0x0008
+#define STUN_ATTR_ERROR_CODE 0x0009
+#define STUN_ATTR_LIFETIME 0x000D
+#define STUN_ATTR_XOR_PEER 0x0012
+#define STUN_ATTR_DATA 0x0013
+#define STUN_ATTR_REALM 0x0014
+#define STUN_ATTR_NONCE 0x0015
+#define STUN_ATTR_XOR_RELAYED 0x0016
+#define STUN_ATTR_REQUESTED_TRANSPORT 0x0019
+#define STUN_ATTR_XOR_MAPPED 0x0020
+#define STUN_ATTR_FINGERPRINT 0x8028
+#define TURN_TRANSPORT_UDP 17
+#define TURN_LIFETIME 600
+#define TURN_TIMEOUT_MS 700
+#define TURN_PERM_MAX 6
+#define TURN_CAND_MAX 4
 
 #define SCTP_PKT_MAX 1100
 #define SCTP_DATA_MAX 1061
@@ -96,6 +132,33 @@ struct Peer {
     char srflx_ip[32];
     uint16_t srflx_port;
     bool have_srflx;
+
+    // TURN relay (RFC 5766). The allocation shares the peer UDP socket, so the
+    // relay address is simply another ICE candidate in the answer SDP.
+    bool turn_allocated;
+    bool have_relay;
+    bool relay_path;                    // current path goes through the relay
+    struct sockaddr_in turn_srv;
+    struct sockaddr_in relay_addr;
+    char turn_url[96];
+    char turn_user[64];
+    char turn_pass[64];
+    char turn_realm[96];
+    uint8_t turn_nonce[128];
+    uint16_t turn_nonce_len;
+    uint8_t turn_key[16];
+    char relay_ip[32];
+    uint16_t relay_port;
+    char turn_error[48];
+    int64_t turn_refresh_at;
+    int64_t turn_perm_at;
+    struct sockaddr_in turn_cands[TURN_CAND_MAX];
+    uint8_t turn_cand_head;
+    uint8_t turn_cand_count;
+    struct sockaddr_in turn_perms[TURN_CAND_MAX];
+    uint8_t turn_perm_count;
+    struct k_mutex turn_lock;
+    volatile bool relay_used;           // at least one Data Indication seen
 
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
@@ -156,7 +219,7 @@ struct Peer {
 
 static struct Peer g_peer;
 static struct k_thread g_peer_thread;
-K_THREAD_STACK_DEFINE(g_peer_stack, 7168);
+K_THREAD_STACK_DEFINE(g_peer_stack, 12288);
 
 // --- small helpers ----------------------------------------------------------
 
@@ -357,6 +420,146 @@ static void hmac_sha1(const uint8_t *key, size_t key_len, const uint8_t *d,
     sha1_update(&s, opad, 64);
     sha1_update(&s, inner, 20);
     sha1_final(&s, out);
+}
+
+// --- MD5 (TURN long-term credential key) ------------------------------------
+//
+// RFC 5389 derives the long-term credential key as
+// MD5(username ":" realm ":" password). mbedTLS' MD5 is not part of the default
+// ESP32 PSA profile, so a compact copy lives here; it is only used while a TURN
+// allocation is being negotiated.
+
+struct Md5 {
+    uint32_t h[4];
+    uint64_t len;
+    uint8_t buf[64];
+    size_t fill;
+};
+
+static uint32_t rd32le(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static void wr32le(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static void md5_block(struct Md5 *s, const uint8_t *p)
+{
+    static const uint32_t k[64] = {
+        0xd76aa478u, 0xe8c7b756u, 0x242070dbu, 0xc1bdceeeu,
+        0xf57c0fafu, 0x4787c62au, 0xa8304613u, 0xfd469501u,
+        0x698098d8u, 0x8b44f7afu, 0xffff5bb1u, 0x895cd7beu,
+        0x6b901122u, 0xfd987193u, 0xa679438eu, 0x49b40821u,
+        0xf61e2562u, 0xc040b340u, 0x265e5a51u, 0xe9b6c7aau,
+        0xd62f105du, 0x02441453u, 0xd8a1e681u, 0xe7d3fbc8u,
+        0x21e1cde6u, 0xc33707d6u, 0xf4d50d87u, 0x455a14edu,
+        0xa9e3e905u, 0xfcefa3f8u, 0x676f02d9u, 0x8d2a4c8au,
+        0xfffa3942u, 0x8771f681u, 0x6d9d6122u, 0xfde5380cu,
+        0xa4beea44u, 0x4bdecfa9u, 0xf6bb4b60u, 0xbebfbc70u,
+        0x289b7ec6u, 0xeaa127fau, 0xd4ef3085u, 0x04881d05u,
+        0xd9d4d039u, 0xe6db99e5u, 0x1fa27cf8u, 0xc4ac5665u,
+        0xf4292244u, 0x432aff97u, 0xab9423a7u, 0xfc93a039u,
+        0x655b59c3u, 0x8f0ccc92u, 0xffeff47du, 0x85845dd1u,
+        0x6fa87e4fu, 0xfe2ce6e0u, 0xa3014314u, 0x4e0811a1u,
+        0xf7537e82u, 0xbd3af235u, 0x2ad7d2bbu, 0xeb86d391u,
+    };
+    static const uint8_t r[64] = {
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+        5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+    };
+    uint32_t w[16];
+    for (int i = 0; i < 16; i++) {
+        w[i] = rd32le(p + 4 * i);
+    }
+    uint32_t a = s->h[0], b = s->h[1], c = s->h[2], d = s->h[3];
+    for (int i = 0; i < 64; i++) {
+        uint32_t f;
+        int g;
+        if (i < 16) {
+            f = (b & c) | (~b & d);
+            g = i;
+        } else if (i < 32) {
+            f = (d & b) | (~d & c);
+            g = (5 * i + 1) & 15;
+        } else if (i < 48) {
+            f = b ^ c ^ d;
+            g = (3 * i + 5) & 15;
+        } else {
+            f = c ^ (b | ~d);
+            g = (7 * i) & 15;
+        }
+        uint32_t tmp = d;
+        d = c;
+        c = b;
+        b = b + rol32(a + f + k[i] + w[g], r[i]);
+        a = tmp;
+    }
+    s->h[0] += a;
+    s->h[1] += b;
+    s->h[2] += c;
+    s->h[3] += d;
+}
+
+static void md5_init(struct Md5 *s)
+{
+    s->h[0] = 0x67452301u;
+    s->h[1] = 0xefcdab89u;
+    s->h[2] = 0x98badcfeu;
+    s->h[3] = 0x10325476u;
+    s->len = 0;
+    s->fill = 0;
+}
+
+static void md5_update(struct Md5 *s, const void *d, size_t n)
+{
+    const uint8_t *p = (const uint8_t *)d;
+    s->len += n;
+    while (n > 0) {
+        size_t take = 64 - s->fill;
+        if (take > n) {
+            take = n;
+        }
+        memcpy(s->buf + s->fill, p, take);
+        s->fill += take;
+        p += take;
+        n -= take;
+        if (s->fill == 64) {
+            md5_block(s, s->buf);
+            s->fill = 0;
+        }
+    }
+}
+
+static void md5_final(struct Md5 *s, uint8_t out[16])
+{
+    uint64_t bits = s->len * 8;
+    static const uint8_t pad[64] = {0x80};
+    size_t padlen = s->fill < 56 ? 56 - s->fill : 120 - s->fill;
+    md5_update(s, pad, padlen);
+    uint8_t lenb[8];
+    wr32le(lenb, (uint32_t)bits);
+    wr32le(lenb + 4, (uint32_t)(bits >> 32));
+    md5_update(s, lenb, sizeof(lenb));
+    for (int i = 0; i < 4; i++) {
+        wr32le(out + 4 * i, s->h[i]);
+    }
+}
+
+static void md5_digest(const void *d, size_t n, uint8_t out[16])
+{
+    struct Md5 s;
+    md5_init(&s);
+    md5_update(&s, d, n);
+    md5_final(&s, out);
 }
 
 // --- SHA-256 (certificate fingerprint) --------------------------------------
@@ -586,6 +789,19 @@ static int raw_send(Peer *p, const struct sockaddr_in *dst, const uint8_t *d, si
     return rc < 0 ? -errno : rc;
 }
 
+// Route a datagram over the current ICE path: direct to the peer, or wrapped
+// in a TURN Send Indication when the relay was selected.
+static int peer_send(Peer *p, const struct sockaddr_in *dst, const uint8_t *d,
+                     size_t n);
+
+static int turn_send_indication(Peer *p, const struct sockaddr_in *peer,
+                                const uint8_t *d, size_t n);
+
+static int turn_dispatch_data(Peer *p, const uint8_t *d, size_t n,
+                              uint8_t *out, size_t cap);
+
+static bool same_addr(const struct sockaddr_in *a, const struct sockaddr_in *b);
+
 static void stun_binding_response(Peer *p, const struct sockaddr_in *src,
                                   const uint8_t *req, size_t req_len)
 {
@@ -661,7 +877,7 @@ static void stun_binding_response(Peer *p, const struct sockaddr_in *src,
     pos += 8;
 
     wr16(resp + 2, (uint16_t)(pos - 20));
-    raw_send(p, src, resp, pos);
+    peer_send(p, src, resp, pos);
     p->remote_validated = true;
 }
 
@@ -739,6 +955,797 @@ static bool stun_probe(Peer *p, const char *server, char *ip_out, size_t cap,
     return ok;
 }
 
+// --- TURN -------------------------------------------------------------------
+//
+// A small RFC 5766 client. The device needs a relayed candidate, permission
+// creation, and Send/Data Indications; channel binds are never requested, so
+// browser payloads always arrive as Data Indications that we unwrap here.
+//
+// TURN requests are synchronous (one outstanding request, short timeout) which
+// keeps the state machine tiny. They only run during allocation, when the
+// browser trickles a candidate, and on the periodic refresh.
+
+static void addr_fmt(const struct sockaddr_in *a, char *out, size_t cap)
+{
+    uint32_t ip = ntohl(a->sin_addr.s_addr);
+    snprintf(out, cap, "%u.%u.%u.%u", (unsigned)(ip >> 24),
+             (unsigned)((ip >> 16) & 0xff), (unsigned)((ip >> 8) & 0xff),
+             (unsigned)(ip & 0xff));
+}
+
+static bool same_ip(const struct sockaddr_in *a, const struct sockaddr_in *b)
+{
+    return a->sin_addr.s_addr == b->sin_addr.s_addr;
+}
+
+static size_t stun_begin(uint8_t *b, size_t cap, uint16_t type)
+{
+    if (cap < 20) {
+        return 0;
+    }
+    memset(b, 0, 20);
+    wr16(b, type);
+    wr32(b + 4, STUN_MAGIC);
+    for (int i = 0; i < 3; i++) {
+        wr32(b + 8 + 4 * i, rng_next());
+    }
+    return 20;
+}
+
+static bool stun_add(uint8_t *b, size_t cap, size_t *pos, uint16_t type,
+                     const void *val, uint16_t len)
+{
+    size_t need = 4 + ((len + 3u) & ~3u);
+    if (*pos + need > cap) {
+        return false;
+    }
+    wr16(b + *pos, type);
+    wr16(b + *pos + 2, len);
+    if (len) {
+        memcpy(b + *pos + 4, val, len);
+    }
+    if (len & 3u) {
+        memset(b + *pos + 4 + len, 0, 4 - (len & 3u));
+    }
+    *pos += need;
+    return true;
+}
+
+static bool stun_add_xor_addr(uint8_t *b, size_t cap, size_t *pos, uint16_t type,
+                              const struct sockaddr_in *a)
+{
+    uint8_t v[8];
+    v[0] = 0;
+    v[1] = 0x01;
+    wr16(v + 2, (uint16_t)(ntohs(a->sin_port) ^ 0x2112));
+    wr32(v + 4, ntohl(a->sin_addr.s_addr) ^ STUN_MAGIC);
+    return stun_add(b, cap, pos, type, v, sizeof(v));
+}
+
+static bool stun_get_xor_addr(const uint8_t *val, uint16_t len,
+                              struct sockaddr_in *a)
+{
+    if (len < 8 || val[1] != 0x01) {
+        return false;
+    }
+    memset(a, 0, sizeof(*a));
+    a->sin_family = AF_INET;
+    a->sin_port = htons((uint16_t)(rd16(val + 2) ^ 0x2112));
+    a->sin_addr.s_addr = htonl(rd32(val + 4) ^ STUN_MAGIC);
+    return true;
+}
+
+static void stun_end(uint8_t *b, size_t pos)
+{
+    wr16(b + 2, (uint16_t)(pos - 20));
+}
+
+static bool stun_integrity(Peer *p, uint8_t *b, size_t cap, size_t *pos)
+{
+    if (*pos + 24 > cap) {
+        return false;
+    }
+    // The HMAC covers the message up to the MESSAGE-INTEGRITY header, with the
+    // length field already accounting for the 24-byte attribute itself.
+    wr16(b + 2, (uint16_t)(*pos + 24 - 20));
+    uint8_t mac[20];
+    hmac_sha1(p->turn_key, sizeof(p->turn_key), b, *pos, mac);
+    wr16(b + *pos, STUN_ATTR_MESSAGE_INTEGRITY);
+    wr16(b + *pos + 2, 20);
+    memcpy(b + *pos + 4, mac, 20);
+    *pos += 24;
+    return true;
+}
+
+struct TurnReply {
+    uint16_t type;
+    int code;
+    const uint8_t *realm;
+    uint16_t realm_len;
+    const uint8_t *nonce;
+    uint16_t nonce_len;
+    bool have_relay;
+    struct sockaddr_in relay;
+    uint32_t lifetime;
+};
+
+static bool turn_parse(const uint8_t *d, size_t n, struct TurnReply *r)
+{
+    memset(r, 0, sizeof(*r));
+    if (n < 20 || rd32(d + 4) != STUN_MAGIC) {
+        return false;
+    }
+    r->type = rd16(d);
+    size_t off = 20;
+    uint16_t type, len;
+    const uint8_t *val;
+    while (stun_parse_attr(d, n, &off, &type, &val, &len)) {
+        switch (type) {
+        case STUN_ATTR_ERROR_CODE:
+            if (len >= 4) {
+                r->code = (val[2] & 0x07) * 100 + val[3];
+            }
+            break;
+        case STUN_ATTR_REALM:
+            r->realm = val;
+            r->realm_len = len;
+            break;
+        case STUN_ATTR_NONCE:
+            r->nonce = val;
+            r->nonce_len = len;
+            break;
+        case STUN_ATTR_XOR_RELAYED:
+            if (stun_get_xor_addr(val, len, &r->relay)) {
+                r->have_relay = true;
+            }
+            break;
+        case STUN_ATTR_LIFETIME:
+            if (len >= 4) {
+                r->lifetime = rd32(val);
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    return true;
+}
+
+static void turn_note_auth(Peer *p, const struct TurnReply *r)
+{
+    bool changed = false;
+    if (r->realm && r->realm_len) {
+        size_t n = r->realm_len < sizeof(p->turn_realm) - 1
+                       ? r->realm_len
+                       : sizeof(p->turn_realm) - 1;
+        if (n != strlen(p->turn_realm) || memcmp(p->turn_realm, r->realm, n) != 0) {
+            memcpy(p->turn_realm, r->realm, n);
+            p->turn_realm[n] = '\0';
+            changed = true;
+        }
+    }
+    if (r->nonce && r->nonce_len) {
+        size_t n = r->nonce_len < sizeof(p->turn_nonce)
+                       ? r->nonce_len
+                       : sizeof(p->turn_nonce);
+        if (n != p->turn_nonce_len || memcmp(p->turn_nonce, r->nonce, n) != 0) {
+            memcpy(p->turn_nonce, r->nonce, n);
+            p->turn_nonce_len = (uint16_t)n;
+            changed = true;
+        }
+    }
+    if (changed && p->turn_realm[0]) {
+        char buf[224];
+        int n = snprintf(buf, sizeof(buf), "%s:%s:%s", p->turn_user,
+                         p->turn_realm, p->turn_pass);
+        if (n > 0 && (size_t)n < sizeof(buf)) {
+            md5_digest(buf, (size_t)n, p->turn_key);
+        }
+    }
+}
+
+static bool turn_build(Peer *p, uint8_t *b, size_t cap, uint16_t type, bool auth,
+                       const struct sockaddr_in *peer, uint32_t lifetime,
+                       size_t *len)
+{
+    size_t pos = stun_begin(b, cap, type);
+    if (!pos) {
+        return false;
+    }
+    if (type == TURN_ALLOCATE_REQ) {
+        uint8_t rt[4] = {TURN_TRANSPORT_UDP, 0, 0, 0};
+        if (!stun_add(b, cap, &pos, STUN_ATTR_REQUESTED_TRANSPORT, rt,
+                      sizeof(rt))) {
+            return false;
+        }
+    } else if (type == TURN_REFRESH_REQ) {
+        uint8_t lt[4];
+        wr32(lt, lifetime);
+        if (!stun_add(b, cap, &pos, STUN_ATTR_LIFETIME, lt, sizeof(lt))) {
+            return false;
+        }
+    }
+    if (peer && !stun_add_xor_addr(b, cap, &pos, STUN_ATTR_XOR_PEER, peer)) {
+        return false;
+    }
+    if (auth) {
+        if (!stun_add(b, cap, &pos, STUN_ATTR_USERNAME, p->turn_user,
+                      (uint16_t)strlen(p->turn_user)) ||
+            !stun_add(b, cap, &pos, STUN_ATTR_REALM, p->turn_realm,
+                      (uint16_t)strlen(p->turn_realm)) ||
+            !stun_add(b, cap, &pos, STUN_ATTR_NONCE, p->turn_nonce,
+                      p->turn_nonce_len) ||
+            !stun_integrity(p, b, cap, &pos)) {
+            return false;
+        }
+    }
+    stun_end(b, pos);
+    *len = pos;
+    return true;
+}
+
+static int turn_dispatch_data(Peer *p, const uint8_t *d, size_t n, uint8_t *out,
+                              size_t cap)
+{
+    struct sockaddr_in peer;
+    const uint8_t *data = NULL;
+    uint16_t dlen = 0;
+    bool have_peer = false;
+    size_t off = 20;
+    uint16_t type, len;
+    const uint8_t *val;
+
+    while (stun_parse_attr(d, n, &off, &type, &val, &len)) {
+        if (type == STUN_ATTR_XOR_PEER) {
+            have_peer = stun_get_xor_addr(val, len, &peer);
+        } else if (type == STUN_ATTR_DATA) {
+            data = val;
+            dlen = len;
+        }
+    }
+    if (!have_peer || !data || !p->turn_allocated) {
+        return -1;
+    }
+
+    p->relay_path = true;
+    p->relay_used = true;
+    p->cur = peer;
+    p->have_cur = true;
+    // The peer may already have been recorded by a STUN connectivity check
+    // from the same 5-tuple, so "unchanged" is not a reason to skip this: the
+    // cookie callbacks hash the transport id, and it must be set before the
+    // first ClientHello is processed.
+    if (p->tls_setup && !p->tls_ready) {
+        (void)mbedtls_ssl_set_client_transport_id(
+            &p->ssl, (const unsigned char *)&peer, sizeof(peer));
+    }
+
+    if (dlen >= 20 && data[0] <= 0x01 && rd32(data + 4) == STUN_MAGIC) {
+        if (rd16(data) == STUN_BINDING_REQ) {
+            stun_binding_response(p, &peer, data, dlen);
+        }
+        return -1;
+    }
+    if (!out || cap == 0) {
+        return -1;
+    }
+    size_t copy = dlen < cap ? dlen : cap;
+    memcpy(out, data, copy);
+    return (int)copy;
+}
+
+static int turn_send_indication(Peer *p, const struct sockaddr_in *peer,
+                                const uint8_t *d, size_t n)
+{
+    if (n > 1400) {
+        return -EMSGSIZE;
+    }
+    uint8_t head[32];
+    memset(head, 0, sizeof(head));
+    size_t padded = (n + 3u) & ~3u;
+    wr16(head, TURN_SEND_IND);
+    // Message length: XOR-PEER-ADDRESS (4 + 8) plus DATA (4 + padded payload).
+    wr16(head + 2, (uint16_t)(16 + padded));
+    wr32(head + 4, STUN_MAGIC);
+    for (int i = 0; i < 3; i++) {
+        wr32(head + 8 + 4 * i, rng_next());
+    }
+    wr16(head + 20, STUN_ATTR_XOR_PEER);
+    wr16(head + 22, 8);
+    head[24] = 0;
+    head[25] = 1;
+    wr16(head + 26, (uint16_t)(ntohs(peer->sin_port) ^ 0x2112));
+    wr32(head + 28, ntohl(peer->sin_addr.s_addr) ^ STUN_MAGIC);
+
+    uint8_t datahdr[4];
+    wr16(datahdr, STUN_ATTR_DATA);
+    wr16(datahdr + 2, (uint16_t)n);
+    static const uint8_t zero[4] = {0, 0, 0, 0};
+
+    struct net_iovec iov[4] = {
+        {head, sizeof(head)},
+        {datahdr, sizeof(datahdr)},
+        {(void *)d, n},
+        {(void *)zero, padded - n},
+    };
+    struct net_msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_name = (void *)&p->turn_srv;
+    msg.msg_namelen = sizeof(p->turn_srv);
+    msg.msg_iov = iov;
+    msg.msg_iovlen = 4;
+    int rc = zsock_sendmsg(p->fd, &msg, 0);
+    return rc < 0 ? -errno : rc;
+}
+
+static int peer_send(Peer *p, const struct sockaddr_in *dst, const uint8_t *d,
+                     size_t n)
+{
+    if (p->relay_path && p->turn_allocated) {
+        return turn_send_indication(p, dst, d, n);
+    }
+    return raw_send(p, dst, d, n);
+}
+
+static int turn_send_wait(Peer *p, uint8_t *req, size_t req_len, uint8_t *resp,
+                          size_t cap, size_t *resp_len)
+{
+    uint8_t txid[12];
+    memcpy(txid, req + 8, sizeof(txid));
+    if (raw_send(p, &p->turn_srv, req, req_len) < 0) {
+        return -1;
+    }
+    int64_t end = k_uptime_get() + TURN_TIMEOUT_MS;
+    for (;;) {
+        int64_t left = end - k_uptime_get();
+        if (left <= 0) {
+            return -1;
+        }
+        struct zsock_pollfd pfd = {.fd = p->fd, .events = ZSOCK_POLLIN};
+        if (zsock_poll(&pfd, 1, (int)left) <= 0) {
+            return -1;
+        }
+        uint8_t raw[512];
+        struct sockaddr_in src;
+        socklen_t sl = sizeof(src);
+        int n = zsock_recvfrom(p->fd, raw, sizeof(raw), 0,
+                               (struct sockaddr *)&src, &sl);
+        if (n < 20 || raw[0] > 0x01 || rd32(raw + 4) != STUN_MAGIC) {
+            continue;
+        }
+        uint16_t mt = rd16(raw);
+        if (mt == STUN_BINDING_REQ) {
+            // A direct browser check raced the TURN response.
+            p->relay_path = false;
+            p->cur = src;
+            p->have_cur = true;
+            stun_binding_response(p, &src, raw, (size_t)n);
+            continue;
+        }
+        if (mt == TURN_DATA_IND) {
+            (void)turn_dispatch_data(p, raw, (size_t)n, NULL, 0);
+            continue;
+        }
+        if (memcmp(raw + 8, txid, sizeof(txid)) != 0) {
+            continue;
+        }
+        size_t copy = (size_t)n < cap ? (size_t)n : cap;
+        memcpy(resp, raw, copy);
+        *resp_len = copy;
+        return mt;
+    }
+}
+
+// Delete an allocation on this 5-tuple. Used on teardown, and to recover from
+// a 437 Allocation Mismatch left behind when the peer is restarted faster than
+// the server's allocation lifetime.
+static bool turn_deallocate(Peer *p)
+{
+    uint8_t req[256], resp[320];
+    size_t len = 0, rlen = 0;
+
+    if (!p->turn_realm[0] || !p->turn_nonce_len) {
+        return false;
+    }
+    if (!turn_build(p, req, sizeof(req), TURN_REFRESH_REQ, true, NULL, 0,
+                    &len)) {
+        return false;
+    }
+    int mt = turn_send_wait(p, req, len, resp, sizeof(resp), &rlen);
+    if (mt == TURN_REFRESH_OK) {
+        p->turn_allocated = false;
+        p->have_relay = false;
+        p->relay_path = false;
+        printk("webrtc: TURN allocation released\n");
+        return true;
+    }
+    if (mt == TURN_ERROR) {
+        struct TurnReply r;
+        if (turn_parse(resp, rlen, &r)) {
+            turn_note_auth(p, &r);
+        }
+    }
+    return false;
+}
+
+// coturn answers 437 instead of a 401 challenge when our 5-tuple still owns an
+// allocation (fast peer restart or device reboot), so we never learn the realm
+// needed to authenticate the Refresh(0) that clears it. Ask from a throwaway
+// socket: it has no allocation, so the server answers with a normal challenge.
+static bool turn_bootstrap_auth(Peer *p)
+{
+    int tmp = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (tmp < 0) {
+        return false;
+    }
+    zsock_fcntl(tmp, F_SETFL, O_NONBLOCK);
+
+    uint8_t req[320], resp[320];
+    size_t len = 0, rlen = 0;
+    bool ok = false;
+    int saved = p->fd;
+    p->fd = tmp;
+    if (turn_build(p, req, sizeof(req), TURN_ALLOCATE_REQ, false, NULL,
+                   TURN_LIFETIME, &len)) {
+        int mt = turn_send_wait(p, req, len, resp, sizeof(resp), &rlen);
+        if (mt == TURN_ERROR) {
+            struct TurnReply r;
+            if (turn_parse(resp, rlen, &r) &&
+                (r.code == 401 || r.code == 438)) {
+                turn_note_auth(p, &r);
+                ok = p->turn_realm[0] && p->turn_nonce_len > 0;
+            }
+        }
+    }
+    p->fd = saved;
+    zsock_close(tmp);
+    return ok;
+}
+
+static bool turn_allocate(Peer *p)
+{
+    uint8_t req[320], resp[320];
+    size_t len = 0, rlen = 0;
+    int mt = 0;
+    int auth_tries = 0;
+    bool released = false;
+
+    for (int attempt = 0; attempt < 12; attempt++) {
+        bool auth = p->turn_realm[0] && p->turn_nonce_len > 0;
+        if (!turn_build(p, req, sizeof(req), TURN_ALLOCATE_REQ, auth, NULL,
+                        TURN_LIFETIME, &len)) {
+            snprintf(p->turn_error, sizeof(p->turn_error), "alloc build");
+            return false;
+        }
+        mt = turn_send_wait(p, req, len, resp, sizeof(resp), &rlen);
+        if (mt < 0) {
+            snprintf(p->turn_error, sizeof(p->turn_error), "no response");
+            return false;
+        }
+        struct TurnReply r;
+        if (!turn_parse(resp, rlen, &r)) {
+            snprintf(p->turn_error, sizeof(p->turn_error), "bad response");
+            return false;
+        }
+        if (mt == TURN_ALLOCATE_OK && r.have_relay) {
+            p->relay_addr = r.relay;
+            p->have_relay = true;
+            p->turn_allocated = true;
+            addr_fmt(&r.relay, p->relay_ip, sizeof(p->relay_ip));
+            p->relay_port = ntohs(r.relay.sin_port);
+            uint32_t life = r.lifetime ? r.lifetime : TURN_LIFETIME;
+            p->turn_refresh_at = k_uptime_get() + (int64_t)life * 800;
+            p->turn_perm_at = k_uptime_get() + 180000;
+            p->turn_error[0] = '\0';
+            return true;
+        }
+        if (mt == TURN_ERROR) {
+            turn_note_auth(p, &r);
+            if (r.code == 401 || r.code == 438) {
+                if (++auth_tries <= 3) {
+                    continue;
+                }
+                snprintf(p->turn_error, sizeof(p->turn_error), "auth %d",
+                         r.code);
+                return false;
+            }
+            if (r.code == 437) {
+                // coturn answers 437 before authentication when the 5-tuple
+                // still has an allocation, and keeps the session in a closing
+                // state for a moment after Refresh(0). Delete it if we know
+                // the realm, then poll until the mismatch clears.
+                if (!released) {
+                    released = true;
+                    if (!p->turn_realm[0] || !p->turn_nonce_len) {
+                        (void)turn_bootstrap_auth(p);
+                    }
+                    if (p->turn_realm[0]) {
+                        bool gone = turn_deallocate(p);
+                        printk("webrtc: TURN 437, deallocate %s\n",
+                               gone ? "ok" : "failed");
+                    }
+                }
+                k_sleep(K_MSEC(250));
+                continue;
+            }
+            snprintf(p->turn_error, sizeof(p->turn_error), "alloc %d", r.code);
+            return false;
+        }
+        snprintf(p->turn_error, sizeof(p->turn_error), "alloc type %04x", mt);
+        return false;
+    }
+    if (!p->turn_error[0]) {
+        snprintf(p->turn_error, sizeof(p->turn_error), "alloc retry");
+    }
+    return false;
+}
+
+static void turn_remember(Peer *p, const struct sockaddr_in *peer)
+{
+    k_mutex_lock(&p->turn_lock, K_FOREVER);
+    for (uint8_t i = 0; i < p->turn_perm_count; i++) {
+        if (same_ip(&p->turn_perms[i], peer)) {
+            p->turn_perms[i] = *peer;
+            k_mutex_unlock(&p->turn_lock);
+            return;
+        }
+    }
+    if (p->turn_perm_count < TURN_CAND_MAX) {
+        p->turn_perms[p->turn_perm_count++] = *peer;
+    }
+    k_mutex_unlock(&p->turn_lock);
+}
+
+static bool turn_set_permission(Peer *p, const struct sockaddr_in *peer)
+{
+    uint8_t req[320], resp[320];
+    size_t len = 0, rlen = 0;
+
+    if (!p->turn_allocated) {
+        return false;
+    }
+    for (int attempt = 0; attempt < 2; attempt++) {
+        bool auth = p->turn_realm[0] && p->turn_nonce_len > 0;
+        if (!turn_build(p, req, sizeof(req), TURN_PERM_REQ, auth, peer,
+                        TURN_LIFETIME, &len)) {
+            return false;
+        }
+        int mt = turn_send_wait(p, req, len, resp, sizeof(resp), &rlen);
+        if (mt < 0) {
+            return false;
+        }
+        struct TurnReply r;
+        if (!turn_parse(resp, rlen, &r)) {
+            return false;
+        }
+        if (mt == TURN_PERM_OK) {
+            turn_remember(p, peer);
+            return true;
+        }
+        if (mt == TURN_ERROR && (r.code == 401 || r.code == 438) &&
+            attempt == 0) {
+            turn_note_auth(p, &r);
+            continue;
+        }
+        if (mt == TURN_ERROR) {
+            snprintf(p->turn_error, sizeof(p->turn_error), "perm %d", r.code);
+        }
+        return false;
+    }
+    return false;
+}
+
+static void turn_refresh(Peer *p)
+{
+    uint8_t req[320], resp[320];
+    size_t len = 0, rlen = 0;
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        bool auth = p->turn_realm[0] && p->turn_nonce_len > 0;
+        if (!turn_build(p, req, sizeof(req), TURN_REFRESH_REQ, auth, NULL,
+                        TURN_LIFETIME, &len)) {
+            return;
+        }
+        int mt = turn_send_wait(p, req, len, resp, sizeof(resp), &rlen);
+        if (mt < 0) {
+            return;
+        }
+        struct TurnReply r;
+        if (!turn_parse(resp, rlen, &r)) {
+            return;
+        }
+        if (mt == TURN_REFRESH_OK) {
+            uint32_t life = r.lifetime ? r.lifetime : TURN_LIFETIME;
+            p->turn_refresh_at = k_uptime_get() + (int64_t)life * 800;
+            return;
+        }
+        if (mt == TURN_ERROR && (r.code == 401 || r.code == 438) &&
+            attempt == 0) {
+            turn_note_auth(p, &r);
+            continue;
+        }
+        if (mt == TURN_ERROR) {
+            snprintf(p->turn_error, sizeof(p->turn_error), "refresh %d", r.code);
+        }
+        return;
+    }
+}
+
+static void turn_queue(Peer *p, const struct sockaddr_in *peer)
+{
+    if (!p->turn_allocated || peer->sin_addr.s_addr == 0 || peer->sin_port == 0) {
+        return;
+    }
+    k_mutex_lock(&p->turn_lock, K_FOREVER);
+    for (uint8_t i = 0; i < p->turn_perm_count; i++) {
+        if (same_ip(&p->turn_perms[i], peer)) {
+            k_mutex_unlock(&p->turn_lock);
+            return;
+        }
+    }
+    for (uint8_t i = 0; i < p->turn_cand_count; i++) {
+        uint8_t idx = (uint8_t)((p->turn_cand_head + i) % TURN_CAND_MAX);
+        if (same_ip(&p->turn_cands[idx], peer)) {
+            k_mutex_unlock(&p->turn_lock);
+            return;
+        }
+    }
+    if (p->turn_cand_count < TURN_CAND_MAX) {
+        uint8_t idx =
+            (uint8_t)((p->turn_cand_head + p->turn_cand_count) % TURN_CAND_MAX);
+        p->turn_cands[idx] = *peer;
+        p->turn_cand_count++;
+    }
+    k_mutex_unlock(&p->turn_lock);
+}
+
+static bool candidate_addr(const char *cand, struct sockaddr_in *out)
+{
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", cand);
+    char *toks[20];
+    int nt = 0;
+    char *save = NULL;
+    for (char *t = strtok_r(buf, " \t\r\n", &save); t && nt < 20;
+         t = strtok_r(NULL, " \t\r\n", &save)) {
+        toks[nt++] = t;
+    }
+    int typ = -1, udp = -1;
+    for (int i = 0; i < nt; i++) {
+        if (strcmp(toks[i], "typ") == 0) {
+            typ = i;
+        } else if (strcmp(toks[i], "udp") == 0) {
+            udp = i;
+        }
+    }
+    if (typ < 2 || udp < 0 || udp > typ) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->sin_family = AF_INET;
+    if (zsock_inet_pton(AF_INET, toks[typ - 2], &out->sin_addr) != 1) {
+        return false;
+    }
+    long port = strtol(toks[typ - 1], NULL, 10);
+    if (port <= 0 || port > 65535) {
+        return false;
+    }
+    out->sin_port = htons((uint16_t)port);
+    return out->sin_addr.s_addr != 0;
+}
+
+static void offer_candidates(Peer *p, const char *sdp)
+{
+    const char *line = sdp;
+    while (line && *line) {
+        const char *eol = strstr(line, "\r\n");
+        size_t len = eol ? (size_t)(eol - line) : strlen(line);
+        if (len > 12 && strncmp(line, "a=candidate:", 12) == 0) {
+            char tmp[256];
+            size_t n = len < sizeof(tmp) - 1 ? len : sizeof(tmp) - 1;
+            memcpy(tmp, line, n);
+            tmp[n] = '\0';
+            struct sockaddr_in a;
+            if (candidate_addr(tmp, &a)) {
+                turn_queue(p, &a);
+            }
+        }
+        line = eol ? eol + 2 : NULL;
+    }
+}
+
+static void turn_service(Peer *p)
+{
+    if (!p->turn_allocated) {
+        return;
+    }
+    int64_t now = k_uptime_get();
+    if (now >= p->turn_refresh_at) {
+        turn_refresh(p);
+        if (p->turn_refresh_at <= now) {
+            p->turn_refresh_at = now + 240000;
+        }
+    }
+
+    for (;;) {
+        struct sockaddr_in cand;
+        bool got = false;
+        k_mutex_lock(&p->turn_lock, K_FOREVER);
+        if (p->turn_cand_count) {
+            cand = p->turn_cands[p->turn_cand_head];
+            p->turn_cand_head =
+                (uint8_t)((p->turn_cand_head + 1) % TURN_CAND_MAX);
+            p->turn_cand_count--;
+            got = true;
+        }
+        k_mutex_unlock(&p->turn_lock);
+        if (!got) {
+            break;
+        }
+        (void)turn_set_permission(p, &cand);
+    }
+
+    if (now >= p->turn_perm_at) {
+        struct sockaddr_in perms[TURN_CAND_MAX];
+        uint8_t count;
+        k_mutex_lock(&p->turn_lock, K_FOREVER);
+        count = p->turn_perm_count;
+        memcpy(perms, p->turn_perms, sizeof(perms));
+        k_mutex_unlock(&p->turn_lock);
+        for (uint8_t i = 0; i < count; i++) {
+            (void)turn_set_permission(p, &perms[i]);
+        }
+        p->turn_perm_at = now + 180000;
+    }
+}
+
+static bool turn_setup(Peer *p)
+{
+    p->turn_error[0] = '\0';
+    if (!p->turn_url[0]) {
+        return false;
+    }
+    const char *host = p->turn_url;
+    if (strncmp(host, "turn:", 5) == 0) {
+        host += 5;
+    } else {
+        snprintf(p->turn_error, sizeof(p->turn_error), "unsupported url");
+        return false;
+    }
+    char hostbuf[64];
+    snprintf(hostbuf, sizeof(hostbuf), "%s", host);
+    char *query = strchr(hostbuf, '?');
+    if (query) {
+        *query = '\0';
+    }
+    uint16_t port = 3478;
+    char *colon = strrchr(hostbuf, ':');
+    if (colon) {
+        *colon = '\0';
+        port = (uint16_t)atoi(colon + 1);
+    }
+
+    struct zsock_addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    struct zsock_addrinfo *res = NULL;
+    if (zsock_getaddrinfo(hostbuf, NULL, &hints, &res) != 0 || !res) {
+        snprintf(p->turn_error, sizeof(p->turn_error), "resolve failed");
+        return false;
+    }
+    memcpy(&p->turn_srv, res->ai_addr, sizeof(p->turn_srv));
+    p->turn_srv.sin_port = htons(port);
+    zsock_freeaddrinfo(res);
+
+    if (!turn_allocate(p)) {
+        printk("webrtc: TURN unavailable (%s)\n", p->turn_error);
+        return false;
+    }
+    printk("webrtc: TURN relay candidate %s:%u\n", p->relay_ip, p->relay_port);
+    return true;
+}
+
 // --- DTLS glue --------------------------------------------------------------
 
 static bool same_addr(const struct sockaddr_in *a, const struct sockaddr_in *b)
@@ -752,8 +1759,15 @@ static int dtls_send_cb(void *ctx, const unsigned char *buf, size_t len)
     if (!p->have_cur) {
         return MBEDTLS_ERR_SSL_WANT_WRITE;
     }
-    int rc = raw_send(p, &p->cur, buf, len);
-    return rc < 0 ? MBEDTLS_ERR_NET_SEND_FAILED : rc;
+    int rc = peer_send(p, &p->cur, buf, len);
+    if (rc < 0) {
+        return MBEDTLS_ERR_NET_SEND_FAILED;
+    }
+    // mbedtls compares the callback return with the DTLS record length it asked
+    // to send. A relayed datagram is wrapped in a TURN Send Indication, so raw
+    // sendmsg() returns extra framing bytes; reporting those makes mbedtls see
+    // "sent more than out_left" and fail the handshake with -0x6c00.
+    return (int)len;
 }
 
 static int dtls_recv_cb(void *ctx, unsigned char *buf, size_t len)
@@ -774,14 +1788,30 @@ static int dtls_recv_cb(void *ctx, unsigned char *buf, size_t len)
         if (n < 20) {
             continue;
         }
-        if (raw[0] <= 0x01 && raw[2] <= 1 && rd32(raw + 4) == STUN_MAGIC) {
-            stun_binding_response(p, &src, raw, (size_t)n);
+        if (raw[0] <= 0x01 && rd32(raw + 4) == STUN_MAGIC) {
+            uint16_t mt = rd16(raw);
+            if (mt == TURN_DATA_IND) {
+                int got = turn_dispatch_data(p, raw, (size_t)n, buf, len);
+                if (got > 0) {
+                    return got;
+                }
+                continue;
+            }
+            if (mt == STUN_BINDING_REQ) {
+                p->relay_path = false;
+                p->cur = src;
+                p->have_cur = true;
+                stun_binding_response(p, &src, raw, (size_t)n);
+            }
             continue;
         }
-        bool changed = !p->have_cur || !same_addr(&p->cur, &src);
+        p->relay_path = false;
         p->cur = src;
         p->have_cur = true;
-        if (changed && !p->tls_ready) {
+        // Always refresh the cookie transport id while handshaking. STUN
+        // checks share this socket and may have populated p->cur first, which
+        // would otherwise leave the DTLS cookie bound to a stale/empty id.
+        if (!p->tls_ready) {
             (void)mbedtls_ssl_set_client_transport_id(&p->ssl,
                                                       (const unsigned char *)&src,
                                                       sizeof(src));
@@ -849,6 +1879,8 @@ static int dtls_cookie_check(void *ctx, const unsigned char *cookie, size_t clen
     uint32_t tag = fnv32(info, ilen, 2166136261u ^ 0x4d524146u);
     tag = fnv32((const uint8_t *)&t, sizeof(t), tag);
     if (tag != rd32(cookie + 4)) {
+        printk("webrtc: DTLS cookie mismatch idlen=%u want=%08x got=%08x\n",
+               (unsigned)ilen, (unsigned)rd32(cookie + 4), (unsigned)tag);
         return -1;
     }
     if ((uint32_t)(k_uptime_get_32() - t) > 60000u) {
@@ -1260,12 +2292,15 @@ static void peer_thread(void *a, void *b, void *c)
     ARG_UNUSED(b);
     ARG_UNUSED(c);
     Peer *p = &g_peer;
+    printk("webrtc: peer thread running\n");
 
     while (!p->stop) {
         k_sem_take(&p->wake, K_MSEC(5));
         if (p->stop) {
             break;
         }
+
+        turn_service(p);
 
         if (!p->tls_ready) {
             int rc = mbedtls_ssl_handshake(&p->ssl);
@@ -1319,6 +2354,7 @@ static void peer_thread(void *a, void *b, void *c)
         }
     }
 
+    printk("webrtc: peer thread exit\n");
     p->exited = true;
     k_sem_give(&p->exited_sem);
 }
@@ -1339,6 +2375,43 @@ bool mraf_peer_open(void)
 {
     Peer *p = &g_peer;
     return p->bound && p->tls_ready && p->sctp_ready && p->dcep_acked && !p->stop;
+}
+
+void mraf_peer_add_candidate(const char *candidate)
+{
+    Peer *p = &g_peer;
+    if (!candidate || !p->bound || !p->turn_allocated) {
+        return;
+    }
+    struct sockaddr_in a;
+    if (!candidate_addr(candidate, &a)) {
+        return;
+    }
+    turn_queue(p, &a);
+    k_sem_give(&p->wake);
+}
+
+void mraf_peer_ice_info(struct mraf_ice_info *out)
+{
+    if (!out) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    Peer *p = &g_peer;
+    out->stun_ok = p->have_srflx;
+    out->turn_allocated = p->turn_allocated;
+    out->relay_path = p->relay_used;
+    if (p->have_srflx) {
+        snprintf(out->srflx_addr, sizeof(out->srflx_addr), "%s:%u", p->srflx_ip,
+                 p->srflx_port);
+    }
+    if (p->have_relay) {
+        snprintf(out->relay_addr, sizeof(out->relay_addr), "%s:%u", p->relay_ip,
+                 p->relay_port);
+    }
+    if (p->turn_error[0]) {
+        snprintf(out->turn_error, sizeof(out->turn_error), "%s", p->turn_error);
+    }
 }
 
 static void peer_teardown(Peer *p)
@@ -1363,6 +2436,16 @@ static void peer_teardown(Peer *p)
     p->remote_validated = false;
     p->tx_busy = false;
     p->sack_pending = false;
+    p->turn_allocated = false;
+    p->have_relay = false;
+    p->relay_path = false;
+    p->relay_used = false;
+    p->turn_nonce_len = 0;
+    p->turn_realm[0] = '\0';
+    p->turn_error[0] = '\0';
+    p->turn_cand_head = 0;
+    p->turn_cand_count = 0;
+    p->turn_perm_count = 0;
 }
 
 void mraf_peer_stop(void)
@@ -1378,6 +2461,12 @@ void mraf_peer_stop(void)
     }
     p->stop = false;
     p->exited = false;
+    // Release the relay allocation so an immediate reconnect can allocate the
+    // same 5-tuple again (otherwise the server answers 437 Allocation
+    // Mismatch until its 10-minute lifetime expires).
+    if (p->turn_allocated && p->fd > 0) {
+        (void)turn_deallocate(p);
+    }
     peer_teardown(p);
 }
 
@@ -1419,6 +2508,18 @@ static bool build_answer(Peer *p, const struct Offer *o, const uint8_t fp[32],
         }
         n += m;
     }
+    if (p->have_relay) {
+        // Lowest priority: browsers pick host/srflx when they work and fall
+        // back to the relay when they do not.
+        int m = snprintf(out + n, cap - (size_t)n,
+                         "a=candidate:3 1 udp 16777215 %s %u typ relay "
+                         "raddr %s rport %u generation 0\r\n",
+                         p->relay_ip, p->relay_port, p->host_ip, PEER_PORT);
+        if (m < 0 || (size_t)m >= cap - (size_t)n) {
+            return false;
+        }
+        n += m;
+    }
     (void)o;
     return true;
 }
@@ -1442,11 +2543,15 @@ bool mraf_peer_start(const char *offer_sdp, char *answer_sdp, size_t answer_cap)
     k_sem_init(&p->wake, 0, 1);
     k_sem_init(&p->exited_sem, 0, 1);
     k_mutex_init(&p->tx_lock);
+    k_mutex_init(&p->turn_lock);
     rng_seed();
 
     snprintf(p->remote_ufrag, sizeof(p->remote_ufrag), "%s", offer.ufrag);
     snprintf(p->remote_pwd, sizeof(p->remote_pwd), "%s", offer.pwd);
     snprintf(p->remote_fp, sizeof(p->remote_fp), "%s", offer.fp);
+    snprintf(p->turn_url, sizeof(p->turn_url), "%s", g_cfg.webrtc.turn);
+    snprintf(p->turn_user, sizeof(p->turn_user), "%s", g_cfg.webrtc.turn_user);
+    snprintf(p->turn_pass, sizeof(p->turn_pass), "%s", g_cfg.webrtc.turn_pass);
 
     // Local ICE credentials and SCTP tags.
     static const char alnum[] =
@@ -1495,7 +2600,15 @@ bool mraf_peer_start(const char *offer_sdp, char *answer_sdp, size_t answer_cap)
                                    sizeof(p->srflx_ip), &p->srflx_port);
         if (p->have_srflx) {
             printk("webrtc: srflx candidate %s:%u\n", p->srflx_ip, p->srflx_port);
+        } else {
+            printk("webrtc: STUN lookup failed, trying TURN fallback\n");
         }
+    }
+    // TURN is advertised alongside host/srflx. It is the fallback when the
+    // direct path is blocked (symmetric NAT, slirp, relay-only browser), and it
+    // also creates the permissions needed for relayed browser checks.
+    if (p->turn_url[0] && turn_setup(p)) {
+        offer_candidates(p, offer_sdp);
     }
 
     // DTLS identity and server configuration.

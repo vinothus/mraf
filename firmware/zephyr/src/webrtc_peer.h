@@ -19,6 +19,8 @@ extern "C" {
 
 typedef void (*mraf_peer_rx_cb)(const char *message);
 
+struct mraf_ice_info;
+
 bool mraf_peer_available(void);
 bool mraf_peer_start(const char *offer_sdp, char *answer_sdp, size_t answer_cap);
 void mraf_peer_stop(void);
@@ -28,6 +30,10 @@ int mraf_peer_send(const char *message);
 char *mraf_peer_tx_begin(size_t *cap);
 int mraf_peer_tx_end(size_t len);
 void mraf_peer_set_rx(mraf_peer_rx_cb cb);
+/* Add a trickled browser candidate (creates a TURN permission when needed). */
+void mraf_peer_add_candidate(const char *candidate);
+/* Snapshot the ICE/TURN state for the dashboard. */
+void mraf_peer_ice_info(struct mraf_ice_info *out);
 
 #ifdef __cplusplus
 }

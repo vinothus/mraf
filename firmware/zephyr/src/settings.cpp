@@ -58,6 +58,9 @@ void settingsDefaults(Config &cfg) {
     cfg.webrtc.enabled = false;
     copyStr(cfg.webrtc.server, sizeof(cfg.webrtc.server), "");
     copyStr(cfg.webrtc.stun, sizeof(cfg.webrtc.stun), "");
+    copyStr(cfg.webrtc.turn, sizeof(cfg.webrtc.turn), "");
+    copyStr(cfg.webrtc.turn_user, sizeof(cfg.webrtc.turn_user), "");
+    copyStr(cfg.webrtc.turn_pass, sizeof(cfg.webrtc.turn_pass), "");
     cfg.webrtc.poll_ms = DEFAULT_WEBRTC_POLL_MS;
 
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
@@ -381,6 +384,9 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
         if (!wrtc["enabled"].isNull()) r.enabled = wrtc["enabled"].as<bool>();
         jsonString(wrtc["server"], r.server, sizeof(r.server), false);
         jsonString(wrtc["stun"], r.stun, sizeof(r.stun), false);
+        jsonString(wrtc["turn"], r.turn, sizeof(r.turn), false);
+        jsonString(wrtc["turn_user"], r.turn_user, sizeof(r.turn_user), false);
+        jsonString(wrtc["turn_pass"], r.turn_pass, sizeof(r.turn_pass), true);
         if (!wrtc["poll_ms"].isNull()) {
             int v = wrtc["poll_ms"].as<int>();
             if (v < 100 || v > 5000) { error = "webrtc: poll_ms must be 100..5000"; return false; }
@@ -578,6 +584,11 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
     wrtc["enabled"] = r.enabled;
     wrtc["server"] = r.server;
     wrtc["stun"] = r.stun;
+    wrtc["turn"] = r.turn;
+    wrtc["turn_user"] = r.turn_user;
+    if (include_secrets) {
+        wrtc["turn_pass"] = r.turn_pass;
+    }
     wrtc["poll_ms"] = r.poll_ms;
 
     JsonArray chans = root["channels"].to<JsonArray>();

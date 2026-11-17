@@ -302,6 +302,26 @@ void mraf_platform_webrtc_set_rx(mraf_webrtc_rx_cb cb)
 #endif
 }
 
+void mraf_platform_webrtc_add_candidate(const char *candidate)
+{
+#if defined(CONFIG_MRAF_WEBRTC)
+    mraf_peer_add_candidate(candidate);
+#else
+    ARG_UNUSED(candidate);
+#endif
+}
+
+void mraf_platform_webrtc_ice_info(struct mraf_ice_info *out)
+{
+    if (!out) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+#if defined(CONFIG_MRAF_WEBRTC)
+    mraf_peer_ice_info(out);
+#endif
+}
+
 bool mraf_platform_mains_present(void)
 {
     return g_sim_power_state;

@@ -50,6 +50,18 @@ bool mraf_platform_wireguard_active(void);
 // message that arrives on the data channel.
 typedef void (*mraf_webrtc_rx_cb)(const char *message);
 
+// Runtime ICE/TURN state for the dashboard. Filled by the portable peer;
+// harmless when WebRTC is compiled out (all fields zero/false).
+struct mraf_ice_info {
+    bool stun_ok;
+    bool srflx;
+    bool turn_allocated;
+    bool relay_path;
+    char srflx_addr[40];
+    char relay_addr[40];
+    char turn_error[48];
+};
+
 bool mraf_platform_webrtc_available(void);
 bool mraf_platform_webrtc_start(const char *offer_sdp, char *answer_sdp,
                                 size_t answer_cap);
@@ -59,6 +71,10 @@ int mraf_platform_webrtc_send(const char *message);
 char *mraf_platform_webrtc_tx_begin(size_t *cap);
 int mraf_platform_webrtc_tx_end(size_t len);
 void mraf_platform_webrtc_set_rx(mraf_webrtc_rx_cb cb);
+// Feed a trickled ICE candidate so the TURN client can create the relay
+// permission before the browser starts connectivity checks.
+void mraf_platform_webrtc_add_candidate(const char *candidate);
+void mraf_platform_webrtc_ice_info(struct mraf_ice_info *out);
 
 bool mraf_platform_mains_present(void);
 bool mraf_platform_read_tank_full(bool active_low);

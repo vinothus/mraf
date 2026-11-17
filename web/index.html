@@ -387,7 +387,10 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <div class="field"><label class="row"><input type="checkbox" id="set-webrtc-enabled"> Enable WebRTC data channel</label></div>
         <div class="field"><label>Control plane URL (STUN + signalling)</label><input id="set-webrtc-server" class="wide" placeholder="http://192.168.1.50:8085"></div>
         <div class="field"><label>STUN URL override (optional)</label><input id="set-webrtc-stun" class="wide" placeholder="stun:192.168.1.50:3478"></div>
-        <div class="hint">The browser opens an encrypted data channel straight to the controller and pulls the dashboard over it. The server only relays SDP/ICE and is notified of the link state; it cannot read the traffic. Falls back to HTTP when off.</div>
+        <div class="field"><label>TURN URL override (optional)</label><input id="set-webrtc-turn" class="wide" placeholder="turn:192.168.1.50:3478"></div>
+        <div class="field"><label>TURN username</label><input id="set-webrtc-turn-user" class="wide" placeholder="mraf"></div>
+        <div class="field"><label>TURN password (blank = unchanged)</label><input id="set-webrtc-turn-pass" type="password" class="wide" placeholder="unchanged"></div>
+        <div class="hint">The browser opens an encrypted data channel straight to the controller and pulls the dashboard over it. The server only relays SDP/ICE and is notified of the link state; it cannot read the traffic. STUN and TURN are discovered from the control plane when the overrides are blank; TURN is the fallback when a direct path is blocked. Falls back to HTTP when off.</div>
       </div>
       <div class="card">
         <h3>Pump protection</h3>
@@ -420,6 +423,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
 
   <section id="tab-live" hidden>
     <div class="toolbar"><h2>Live peer-to-peer (WebRTC)</h2><div class="spacer"></div>
+      <label class="row" style="margin-right:10px"><input type="checkbox" id="wrtc-force-relay" onchange="wrtcSetForceRelay(this.checked)"> Force TURN relay</label>
       <button class="action" id="webrtc-reconnect">Reconnect</button>
       <button class="action danger" id="webrtc-stop">Disconnect</button>
     </div>
@@ -436,6 +440,10 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <span class="hint">Controller</span><span id="wrtc-device">--</span>
         <span class="hint">Control plane</span><span id="wrtc-server">--</span>
         <span class="hint">STUN</span><span id="wrtc-stun">--</span>
+        <span class="hint">TURN</span><span id="wrtc-turn">--</span>
+        <span class="hint">TURN allocation</span><span id="wrtc-turn-state">--</span>
+        <span class="hint">Relay address</span><span id="wrtc-relay">--</span>
+        <span class="hint">Selected path</span><span id="wrtc-path">--</span>
         <span class="hint">ICE candidate</span><span id="wrtc-ice">--</span>
       </div>
     </div>
@@ -545,13 +553,28 @@ async function api(path, opts={}){
   }
   return fetchJson(path, opts);
 }
+// A constrained device HTTP server can drop a connection while it is busy with
+// another request, so control-plane/config reads retry briefly instead of
+// leaving WebRTC permanently "off".
+async function fetchJsonRetry(url, opts={}, tries=5, delayMs=350){
+  let last = null;
+  for(let i=0;i<tries;i++){
+    try { return await fetchJson(url, opts); }
+    catch(e){
+      last = e;
+      if(i+1 < tries) await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw last || new Error("unreachable");
+}
 async function post(path, body){ return api(path, {method:"POST", body: JSON.stringify(body)}); }
 
 /* ---------------- WebRTC live peer-to-peer ---------------- */
 const DC_PATHS = new Set(["/api/status","/api/config","/api/events","/api/wireguard",
   "/api/control","/api/chat","/api/time","/api/pump/reset"]);
 const webrtc = {
-  enabled:false, server:"", token:"", deviceId:"", ice:[], stun:"", pollMs:400,
+  enabled:false, server:"", token:"", deviceId:"", ice:[], stun:"", turn:"", pollMs:400,
+  forceRelay:false,
   pc:null, dc:null, state:"off", iceState:"", seq:0, since:0, pending:new Map(),
   rx:0, tx:0, rtt:null, connected:false, pollTimer:null
 };
@@ -562,13 +585,17 @@ function fmtBytes(n){ n=Number(n||0); if(n<1024) return n+" B";
 
 async function webrtcInit(){
   try{
-    const info = await fetchJson("/api/webrtc");
+    const fr = $("#wrtc-force-relay");
+    if(fr){ try{ fr.checked = localStorage.getItem("mraf-force-relay") === "1"; }catch(_){}
+      webrtc.forceRelay = fr.checked; }
+    const info = await fetchJsonRetry("/api/webrtc");
     webrtc.enabled = !!info.enabled;
     webrtc.server = (info.server||"").replace(/\/$/,"");
     webrtc.token = info.token||"";
     webrtc.deviceId = info.device_id||"";
     webrtc.pollMs = info.poll_ms||400;
     webrtc.stun = (info.stun||"").trim();
+    webrtc.turn = (info.turn||"").trim();
     webrtcRender();
     if(webrtc.enabled && webrtc.server) webrtcStart();
     else wrtcLog(webrtc.enabled ? "Set a control-plane URL and save to connect."
@@ -576,15 +603,64 @@ async function webrtcInit(){
   }catch(e){ wrtcLog("WebRTC config: " + e.message); }
 }
 
+function wrtcSetForceRelay(on){
+  webrtc.forceRelay = !!on;
+  try{ localStorage.setItem("mraf-force-relay", on ? "1" : ""); }catch(_){}
+  if(webrtc.pc){ webrtcStop(); setTimeout(webrtcStart, 200); }
+  else { webrtcRender(); }
+}
+
+// The controller may reach the control plane through a NAT gateway address
+// (for example 10.0.2.2 on QEMU slirp) that means nothing to this browser. If
+// the configured URL does not answer, retry with the host that served this
+// dashboard, keeping the control-plane port.
+async function wrtcFetchConfig(){
+  const q = "/api/webrtc/config?device_id=" + encodeURIComponent(webrtc.deviceId);
+  const first = (webrtc.server || "").replace(/\/$/,"");
+  const tried = [];
+  const urls = [];
+  // Prefer the host this dashboard was served from: on QEMU slirp the
+  // controller's control-plane URL points at the NAT gateway (10.0.2.2),
+  // which is unreachable from a browser on the host.
+  try{
+    const u = new URL(first || location.origin);
+    if(u.hostname && u.hostname !== location.hostname){
+      u.hostname = location.hostname;
+      urls.push(u.origin + q);
+    }
+  }catch(_){}
+  if(first) urls.push(first + q);
+  let last = null;
+  for(const url of urls){
+    tried.push(url);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    try{
+      const cfg = await fetchJsonRetry(url, {signal: ctrl.signal}, 2, 250);
+      clearTimeout(timer);
+      // Remember the host that actually answered so signalling and polling use
+      // it too, not the controller's NAT-side address.
+      try{ webrtc.server = new URL(url).origin; }catch(_){}
+      return cfg;
+    }catch(e){ last = e; clearTimeout(timer); }
+  }
+  throw new Error((last && last.message) || "config unreachable (" + tried.join(", ") + ")");
+}
+
 async function webrtcStart(){
   if(webrtc.pc) return;
   try{
-    const cfg = await fetchJson(webrtc.server + "/api/webrtc/config?device_id=" +
-      encodeURIComponent(webrtc.deviceId));
+    const cfg = await wrtcFetchConfig();
     webrtc.ice = cfg.iceServers || [];
     if(cfg.stun && cfg.stun.url) webrtc.stun = cfg.stun.url;
+    if(cfg.turn && cfg.turn.url) webrtc.turn = cfg.turn.url;
     webrtc.pollMs = (cfg.signaling && cfg.signaling.pollMs) || webrtc.pollMs || 400;
-    const pc = new RTCPeerConnection({iceServers: webrtc.ice});
+    const hasTurn = webrtc.ice.some(s => String(s.urls||"").split(",")
+      .some(u => u.trim().toLowerCase().startsWith("turn")));
+    if(webrtc.forceRelay && !hasTurn)
+      wrtcLog("Force-relay is on but the control plane advertised no TURN server.");
+    const pc = new RTCPeerConnection({iceServers: webrtc.ice,
+      iceTransportPolicy: webrtc.forceRelay ? "relay" : "all"});
     webrtc.pc = pc;
     pc.onicecandidate = (ev)=>{ if(ev.candidate) webrtcSignal("candidate",
       {candidate: ev.candidate.candidate, sdpMid: ev.candidate.sdpMid,
@@ -712,6 +788,7 @@ function webrtcStop(){
 
 function webrtcRender(){
   const set=(id,v)=>{ const el=$(id); if(el) el.textContent=v; };
+  const w = (status && status.webrtc) || {};
   set("#wrtc-state", webrtc.state||"off");
   set("#wrtc-source", webrtc.connected ? "WebRTC P2P" : "HTTP");
   set("#wrtc-rtt", webrtc.rtt!=null ? webrtc.rtt+" ms" : "--");
@@ -719,6 +796,15 @@ function webrtcRender(){
   set("#wrtc-device", webrtc.deviceId||"--");
   set("#wrtc-server", webrtc.server||"--");
   set("#wrtc-stun", webrtc.stun||"--");
+  const turnShown = w.turn || webrtc.turn || "";
+  set("#wrtc-turn", turnShown || "--");
+  set("#wrtc-turn-state", w.relay_allocated ? "allocated"
+    : (w.turn_error ? "error: " + w.turn_error
+    : (turnShown ? "pending" : "not configured")));
+  set("#wrtc-relay", w.relay || "--");
+  set("#wrtc-path", w.path === "relay" ? "relay (TURN)"
+    : (w.path === "direct" ? (w.stun_ok ? "direct (STUN)" : "direct")
+    : (webrtc.connected ? "datachannel" : "--")));
   set("#wrtc-ice", webrtc.iceState||"--");
   const pill=$("#p2p-pill");
   if(pill){ pill.hidden = !webrtc.connected; }
@@ -908,6 +994,7 @@ function renderDash(){
 
   renderRelays();
   renderEvents(status.events || []);
+  webrtcRender();
 }
 
 function renderEvents(events){
@@ -1076,6 +1163,9 @@ function fillSettings(){
   $("#set-webrtc-enabled").checked = !!wrc.enabled;
   $("#set-webrtc-server").value = wrc.server || "";
   $("#set-webrtc-stun").value = wrc.stun || "";
+  $("#set-webrtc-turn").value = wrc.turn || "";
+  $("#set-webrtc-turn-user").value = wrc.turn_user || "";
+  $("#set-webrtc-turn-pass").value = "";
 }
 
 function readDays(row){
@@ -1173,6 +1263,10 @@ function buildConfig(){
   cfg.webrtc.enabled = $("#set-webrtc-enabled").checked;
   cfg.webrtc.server = $("#set-webrtc-server").value.trim();
   cfg.webrtc.stun = $("#set-webrtc-stun").value.trim();
+  cfg.webrtc.turn = $("#set-webrtc-turn").value.trim();
+  cfg.webrtc.turn_user = $("#set-webrtc-turn-user").value.trim();
+  const turnPass = $("#set-webrtc-turn-pass").value;
+  if(turnPass) cfg.webrtc.turn_pass = turnPass;
 
   cfg.safety = cfg.safety || {};
   cfg.safety.max_boost_min = Number($("#set-maxboost").value) || 180;

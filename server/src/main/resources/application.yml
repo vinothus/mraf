@@ -58,6 +58,13 @@ mraf:
     stun:
       enabled: ${MRAF_STUN_ENABLED:true}
       port: ${MRAF_STUN_PORT:3478}
+    turn:
+      enabled: ${MRAF_TURN_ENABLED:false}
+      host: ${MRAF_TURN_HOST:}
+      port: ${MRAF_TURN_PORT:3478}
+      url: ${MRAF_TURN_URL:}
+      username: ${MRAF_TURN_USER:}
+      credential: ${MRAF_TURN_PASS:}
     signal:
       ttl-seconds: ${MRAF_WEBRTC_TTL:180}
       max-queue: ${MRAF_WEBRTC_QUEUE:256}

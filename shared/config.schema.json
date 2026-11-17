@@ -66,6 +66,9 @@
         "enabled": {"type": "boolean", "default": false},
         "server": {"type": "string", "maxLength": 63, "description": "Control-plane base URL, e.g. http://10.0.0.5:8085"},
         "stun": {"type": "string", "maxLength": 63, "description": "Optional STUN URL override, e.g. stun:10.0.0.5:3478. Discovered from the server when empty."},
+        "turn": {"type": "string", "maxLength": 95, "description": "Optional TURN relay URL override, e.g. turn:10.0.0.5:3478. Discovered from the server when empty; used as the fallback when a direct/STUN path is unreachable."},
+        "turn_user": {"type": "string", "maxLength": 47, "description": "TURN long-term credential username. Discovered from the server when empty."},
+        "turn_pass": {"type": "string", "maxLength": 63, "description": "TURN long-term credential password. Never returned by GET /api/config."},
         "poll_ms": {"type": "integer", "minimum": 100, "maximum": 5000, "default": 400}
       }
     },

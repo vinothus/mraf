@@ -14,6 +14,7 @@
 #include "mraf_platform.h"
 #include "mraf_state.h"
 #include "settings.h"
+#include "webrtc.h"
 
 static char g_remoteAckId[33];
 static char g_remoteAckResult[24];
@@ -324,6 +325,7 @@ static void remotePoll(void)
             g_ctrl.applyConfig(g_cfg);
             settingsSave(g_cfg);
             mraf_set_timezone(g_cfg.timezone);
+            mraf_webrtc_config_changed();
             result = "applied";
         } else {
             copyRemoteText(g_remoteLastError, sizeof(g_remoteLastError),

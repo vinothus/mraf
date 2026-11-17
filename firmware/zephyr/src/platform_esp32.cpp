@@ -938,6 +938,20 @@ void mraf_platform_webrtc_set_rx(mraf_webrtc_rx_cb cb)
     mraf_peer_set_rx(cb);
 }
 
+void mraf_platform_webrtc_add_candidate(const char *candidate)
+{
+    mraf_peer_add_candidate(candidate);
+}
+
+void mraf_platform_webrtc_ice_info(struct mraf_ice_info *out)
+{
+    if (!out) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    mraf_peer_ice_info(out);
+}
+
 #else // !CONFIG_MRAF_WEBRTC
 
 bool mraf_platform_webrtc_available(void)
@@ -985,6 +999,18 @@ int mraf_platform_webrtc_tx_end(size_t len)
 void mraf_platform_webrtc_set_rx(mraf_webrtc_rx_cb cb)
 {
     ARG_UNUSED(cb);
+}
+
+void mraf_platform_webrtc_add_candidate(const char *candidate)
+{
+    ARG_UNUSED(candidate);
+}
+
+void mraf_platform_webrtc_ice_info(struct mraf_ice_info *out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+    }
 }
 
 #endif // CONFIG_MRAF_WEBRTC
