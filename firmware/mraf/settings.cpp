@@ -25,8 +25,37 @@ static void addWindow(PumpConfig &p, uint16_t on, uint16_t off) {
     p.nwin++;
 }
 
+static bool safeOutputPin(uint8_t pin) {
+    static const uint8_t pins[] = {2,4,5,12,13,14,15,16,17,18,19,21,22,23,
+                                   25,26,27,32,33};
+    for (size_t i = 0; i < sizeof(pins); i++) if (pins[i] == pin) return true;
+    return false;
+}
+
+bool settingsSetProfile(Config &cfg, const char *id) {
+    if (!id || !*id) return false;
+    if (strcmp(id, "agri") == 0) cfg.profile = PROFILE_AGRI;
+    else if (strcmp(id, "home") == 0) cfg.profile = PROFILE_HOME;
+    else if (strcmp(id, "godown") == 0) cfg.profile = PROFILE_GODOWN;
+    else if (strcmp(id, "industry") == 0) cfg.profile = PROFILE_INDUSTRY;
+    else {
+        size_t n = strlen(id);
+        if (n == 0 || n >= sizeof(cfg.profile_id)) return false;
+        if (!((id[0] >= 'a' && id[0] <= 'z'))) return false;
+        for (size_t i = 1; i < n; i++) {
+            char c = id[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                  c == '_' || c == '-')) return false;
+        }
+        cfg.profile = PROFILE_CUSTOM;
+    }
+    copyStr(cfg.profile_id, sizeof(cfg.profile_id), id);
+    return true;
+}
+
 void settingsDefaults(Config &cfg) {
     memset(&cfg, 0, sizeof(cfg));
+    cfg.relay_count = MAX_CHANNELS;
 
     copyStr(cfg.device_name, sizeof(cfg.device_name), DEFAULT_DEVICE_NAME);
     copyStr(cfg.device_heading, sizeof(cfg.device_heading), DEFAULT_DEVICE_HEADING);
@@ -36,6 +65,12 @@ void settingsDefaults(Config &cfg) {
     copyStr(cfg.auth_pass, sizeof(cfg.auth_pass), DEFAULT_AUTH_PASS);
     copyStr(cfg.device_id, sizeof(cfg.device_id), "");   // filled from MAC at boot
     cfg.profile = PROFILE_AGRI;
+    copyStr(cfg.profile_id, sizeof(cfg.profile_id), "agri");
+    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+        cfg.relay_pins[i] = RELAY_PINS[i];
+        cfg.relay_off_pins[i] = cfg.relay_pins[i];
+    }
+    cfg.pump_pin = PUMP_RELAY_PIN;
 
     copyStr(cfg.wifi_ssid, sizeof(cfg.wifi_ssid), "");
     copyStr(cfg.wifi_pass, sizeof(cfg.wifi_pass), "");
@@ -295,12 +330,8 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
         jsonString(dev["auth_pass"], tmp.auth_pass, sizeof(tmp.auth_pass), true);
         jsonString(dev["device_id"], tmp.device_id, sizeof(tmp.device_id), true);
         const char *profile = dev["profile"];
-        if (profile) {
-            if (strcmp(profile, "agri") == 0) tmp.profile = PROFILE_AGRI;
-            else if (strcmp(profile, "home") == 0) tmp.profile = PROFILE_HOME;
-            else if (strcmp(profile, "godown") == 0) tmp.profile = PROFILE_GODOWN;
-            else if (strcmp(profile, "industry") == 0) tmp.profile = PROFILE_INDUSTRY;
-            else { error = "device: profile must be agri/home/godown/industry"; return false; }
+        if (profile && !settingsSetProfile(tmp, profile)) {
+            error = "device: profile must be a slug (a-z, 0-9, -, _)"; return false;
         }
     }
 
@@ -342,6 +373,50 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
         }
     }
 
+    if (!root["relay_count"].isNull()) {
+        int n = root["relay_count"].as<int>();
+        if (n < 1 || n > MAX_CHANNELS) {
+            error = "relay_count must be 1..12";
+            return false;
+        }
+        tmp.relay_count = (uint8_t)n;
+    }
+
+    JsonObject pins = root["pins"].as<JsonObject>();
+    if (pins) {
+        JsonArray relays = pins["relays"].as<JsonArray>();
+        if (relays) {
+            uint8_t i = 0;
+            for (JsonVariant v : relays) {
+                if (i >= MAX_CHANNELS) break;
+                int p = v.as<int>();
+                if (p < 0 || p > 39) {
+                    error = String("pins: relay ") + (i + 1) + " GPIO must be 0..39";
+                    return false;
+                }
+                tmp.relay_pins[i++] = (uint8_t)p;
+            }
+        }
+        JsonArray relaysOff = pins["relays_off"].as<JsonArray>();
+        if (relaysOff) {
+            uint8_t i = 0;
+            for (JsonVariant v : relaysOff) {
+                if (i >= MAX_CHANNELS) break;
+                int p = v.as<int>();
+                if (p < 0 || p > 39) {
+                    error = String("pins: relay ") + (i + 1) + " STOP GPIO must be 0..39";
+                    return false;
+                }
+                tmp.relay_off_pins[i++] = (uint8_t)p;
+            }
+        }
+        if (!pins["pump"].isNull()) {
+            int p = pins["pump"].as<int>();
+            if (p < 0 || p > 39) { error = "pins: pump GPIO must be 0..39"; return false; }
+            tmp.pump_pin = (uint8_t)p;
+        }
+    }
+
     JsonArray chans = root["channels"].as<JsonArray>();
     if (chans) {
         uint8_t i = 0;
@@ -353,6 +428,22 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
             }
             JsonObject o = v.as<JsonObject>();
             ChannelConfig &ch = tmp.channels[i];
+            if (!o["pin"].isNull()) {
+                int p = o["pin"].as<int>();
+                if (p < 0 || p > 39) {
+                    error = String("channel ") + (i + 1) + ": pin must be 0..39";
+                    return false;
+                }
+                tmp.relay_pins[i] = (uint8_t)p;
+            }
+            if (!o["pin_off"].isNull()) {
+                int p = o["pin_off"].as<int>();
+                if (p < 0 || p > 39) {
+                    error = String("channel ") + (i + 1) + ": pin_off must be 0..39";
+                    return false;
+                }
+                tmp.relay_off_pins[i] = (uint8_t)p;
+            }
             jsonString(o["name"], ch.name, sizeof(ch.name), false);
             jsonString(o["zone"], ch.zone, sizeof(ch.zone), false);
             const char *eq = o["equipment"];
@@ -471,12 +562,61 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
         tmp.max_boost_min = (uint16_t)v;
     }
 
+    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+        if (!tmp.relay_off_pins[i]) tmp.relay_off_pins[i] = tmp.relay_pins[i];
+    }
+    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+        if (!safeOutputPin(tmp.relay_pins[i])) {
+            error = String("pins: GPIO ") + tmp.relay_pins[i] + " is not a safe output pin";
+            return false;
+        }
+        if (!safeOutputPin(tmp.relay_off_pins[i])) {
+            error = String("pins: STOP GPIO ") + tmp.relay_off_pins[i] + " is not a safe output pin";
+            return false;
+        }
+    }
+    if (!safeOutputPin(tmp.pump_pin)) {
+        error = String("pins: pump GPIO ") + tmp.pump_pin + " is not a safe output pin";
+        return false;
+    }
+    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+        if (tmp.relay_pins[i] == tmp.pump_pin) {
+            error = "pins: pump GPIO must not be shared with a relay";
+            return false;
+        }
+        for (uint8_t j = i + 1; j < MAX_CHANNELS; j++) {
+            if (tmp.relay_pins[i] == tmp.relay_pins[j]) {
+                error = "pins: each relay needs a unique GPIO";
+                return false;
+            }
+        }
+        if (tmp.relay_off_pins[i] == tmp.relay_pins[i]) continue;
+        if (tmp.relay_off_pins[i] == tmp.pump_pin) {
+            error = "pins: STOP GPIO must not be shared with the pump";
+            return false;
+        }
+        for (uint8_t j = 0; j < MAX_CHANNELS; j++) {
+            if (tmp.relay_off_pins[i] == tmp.relay_pins[j]) {
+                error = "pins: STOP GPIO must not be shared with a relay";
+                return false;
+            }
+        }
+        for (uint8_t j = i + 1; j < MAX_CHANNELS; j++) {
+            if (tmp.relay_off_pins[i] == tmp.relay_off_pins[j] &&
+                tmp.relay_off_pins[j] != tmp.relay_pins[j]) {
+                error = "pins: each STOP GPIO must be unique";
+                return false;
+            }
+        }
+    }
+
     cfg = tmp;
     return true;
 }
 
 void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) {
     JsonObject root = doc.to<JsonObject>();
+    root["relay_count"] = cfg.relay_count;
 
     JsonObject dev = root["device"].to<JsonObject>();
     dev["name"] = cfg.device_name;
@@ -485,7 +625,15 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
     dev["timezone"] = cfg.timezone;
     dev["auth_user"] = cfg.auth_user;
     dev["device_id"] = cfg.device_id;
-    dev["profile"] = profileName(cfg.profile);
+    dev["profile"] = cfg.profile_id[0] ? cfg.profile_id : profileName(cfg.profile);
+    JsonObject pins = root["pins"].to<JsonObject>();
+    JsonArray pinList = pins["relays"].to<JsonArray>();
+    JsonArray offList = pins["relays_off"].to<JsonArray>();
+    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+        pinList.add(cfg.relay_pins[i]);
+        offList.add(cfg.relay_off_pins[i] ? cfg.relay_off_pins[i] : cfg.relay_pins[i]);
+    }
+    pins["pump"] = cfg.pump_pin;
     if (include_secrets) dev["auth_pass"] = cfg.auth_pass;
 
     JsonObject wifi = root["wifi"].to<JsonObject>();
@@ -511,6 +659,7 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
         const ChannelConfig &ch = cfg.channels[i];
         JsonObject o = chans.add<JsonObject>();
         o["id"] = i + 1;
+        o["pin"] = cfg.relay_pins[i];
         o["name"] = ch.name;
         o["zone"] = ch.zone;
         o["equipment"] = equipmentName(ch.equipment);
@@ -649,6 +798,7 @@ const char *profileName(uint8_t p) {
         case PROFILE_HOME: return "home";
         case PROFILE_GODOWN: return "godown";
         case PROFILE_INDUSTRY: return "industry";
+        case PROFILE_CUSTOM: return "custom";
         default: return "agri";
     }
 }

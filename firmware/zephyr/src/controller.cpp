@@ -33,15 +33,23 @@ void Controller::writeRelayPin(uint8_t pin, bool on) const {
 }
 
 void Controller::setRelayPhysical(uint8_t i, bool on) {
-    writeRelayPin(RELAY_PINS[i], on);
+    writeRelayPin(relayPin(i), on);
     relay_[i].output = on;
 }
 
-void Controller::startPulse(uint8_t i, uint16_t ms) {
+void Controller::releaseRelayPins(uint8_t i) const {
+    writeRelayPin(relayPin(i), false);
+    writeRelayPin(relayOffPin(i), false);
+}
+
+void Controller::startPulse(uint8_t i, uint16_t ms, bool on) {
     if (ms < 20) ms = 20;
+    uint8_t pin = on || relayOffPin(i) == relayPin(i) ? relayPin(i) : relayOffPin(i);
     relay_[i].pulsing = true;
+    relay_[i].pulse_pin = pin;
     relay_[i].pulse_until_ms = pulse_clock_ms_ + (unsigned long)ms;
-    setRelayPhysical(i, true);
+    writeRelayPin(pin, true);
+    relay_[i].output = true;
 }
 
 void Controller::setRelayLogical(uint8_t i, bool on, time_t now) {
@@ -51,25 +59,27 @@ void Controller::setRelayLogical(uint8_t i, bool on, time_t now) {
     if (cfg_.channels[i].pulse_mode) {
         uint16_t ms = on ? cfg_.channels[i].pulse_on_ms
                          : cfg_.channels[i].pulse_off_ms;
-        startPulse(i, ms);
+        startPulse(i, ms, on);
     } else {
         setRelayPhysical(i, on);
     }
 }
 
 void Controller::servicePulses() {
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < channelCount(); i++) {
         RelayRuntime &rt = relay_[i];
         if (rt.pulsing &&
             (long)(pulse_clock_ms_ - rt.pulse_until_ms) >= 0) {
             rt.pulsing = false;
-            setRelayPhysical(i, false);
+            if (rt.pulse_pin) writeRelayPin(rt.pulse_pin, false);
+            rt.pulse_pin = 0;
+            rt.output = false;
         }
     }
 }
 
 void Controller::setPumpOutput(bool on, time_t now) {
-    writeRelayPin(PUMP_RELAY_PIN, on);
+    writeRelayPin(pumpPin(), on);
     pump_.on = on;
     pump_.last_change = now;
 }
@@ -90,18 +100,37 @@ void Controller::begin(const Config &cfg) {
     // Park every output in the OFF state before enabling the driver, then
     // enable it. This avoids a relay pulse at boot.
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
-        uint8_t pin = RELAY_PINS[i];
-        digitalWrite(pin, RELAY_ACTIVE_LOW ? HIGH : LOW);
-        pinMode(pin, OUTPUT);
-        writeRelayPin(pin, false);
+        uint8_t pins[2] = {relayPin(i), relayOffPin(i)};
+        for (uint8_t n = 0; n < 2; n++) {
+            uint8_t pin = pins[n];
+            digitalWrite(pin, RELAY_ACTIVE_LOW ? HIGH : LOW);
+            pinMode(pin, OUTPUT);
+            writeRelayPin(pin, false);
+        }
     }
-    digitalWrite(PUMP_RELAY_PIN, RELAY_ACTIVE_LOW ? HIGH : LOW);
-    pinMode(PUMP_RELAY_PIN, OUTPUT);
-    writeRelayPin(PUMP_RELAY_PIN, false);
+    digitalWrite(pumpPin(), RELAY_ACTIVE_LOW ? HIGH : LOW);
+    pinMode(pumpPin(), OUTPUT);
+    writeRelayPin(pumpPin(), false);
 }
 
 void Controller::applyConfig(const Config &cfg) {
+    // Profile changes can remap outputs. Park the old pins, then make every
+    // newly mapped pin an idle HIGH (active-LOW relay released) output.
+    for (uint8_t i = 0; i < MAX_CHANNELS; i++) releaseRelayPins(i);
+    writeRelayPin(pumpPin(), false);
     cfg_ = cfg;
+    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+        uint8_t pins[2] = {relayPin(i), relayOffPin(i)};
+        for (uint8_t n = 0; n < 2; n++) {
+            uint8_t pin = pins[n];
+            digitalWrite(pin, RELAY_ACTIVE_LOW ? HIGH : LOW);
+            pinMode(pin, OUTPUT);
+            writeRelayPin(pin, false);
+        }
+    }
+    digitalWrite(pumpPin(), RELAY_ACTIVE_LOW ? HIGH : LOW);
+    pinMode(pumpPin(), OUTPUT);
+    writeRelayPin(pumpPin(), false);
 }
 
 void Controller::addEvent(const char *src, const char *msg, time_t now) {
@@ -223,8 +252,8 @@ void Controller::tick(time_t now, bool power_present, bool tank_full,
     uint8_t weekday = (uint8_t)((tm.tm_wday + 6) % 7);  // Mon=0
     uint16_t now_min = (uint16_t)(tm.tm_hour * 60 + tm.tm_min);
 
-    // ---- 12 scheduled relays -------------------------------------------------
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    // ---- configured scheduled relays ----------------------------------------
+    for (uint8_t i = 0; i < channelCount(); i++) {
         ChannelConfig &ch = cfg_.channels[i];
         RelayRuntime &rt = relay_[i];
 
@@ -242,7 +271,7 @@ void Controller::tick(time_t now, bool power_present, bool tank_full,
                 rt.output = false;
                 rt.pulsing = false;
                 rt.last_change = now;
-                writeRelayPin(RELAY_PINS[i], false);
+                releaseRelayPins(i);
             }
             rt.recurring_active = false;
             continue;
@@ -355,7 +384,7 @@ void Controller::tripPump(const char *reason, time_t now) {
 
 void Controller::setRelayMode(uint8_t index, RunMode mode, uint16_t boost_min,
                               time_t now, uint16_t pulse_ms) {
-    if (index >= MAX_CHANNELS) return;
+    if (index >= channelCount()) return;
     ChannelConfig &ch = cfg_.channels[index];
     RelayRuntime &rt = relay_[index];
 
@@ -386,13 +415,13 @@ void Controller::setRelayMode(uint8_t index, RunMode mode, uint16_t boost_min,
                 rt.on = false;
                 rt.output = false;
                 rt.pulsing = false;
-                writeRelayPin(RELAY_PINS[index], false);
+                releaseRelayPins(index);
             }
         } else if (mode == MODE_OFF) {
             rt.on = false;
             rt.output = false;
             rt.pulsing = false;
-            writeRelayPin(RELAY_PINS[index], false);
+            releaseRelayPins(index);
         }
         snprintf(msg, sizeof(msg), "R%u mode %s%s", (unsigned)(index + 1),
                  runModeText(mode), ch.pulse_mode ? " (pulse)" : "");
@@ -422,13 +451,13 @@ void Controller::setPumpMode(RunMode mode, uint16_t boost_min, time_t now) {
 }
 
 void Controller::allOff(time_t now) {
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < channelCount(); i++) {
         cfg_.channels[i].mode = MODE_OFF;
         relay_[i].boost_until = 0;
         relay_[i].on = false;
         relay_[i].output = false;
         relay_[i].pulsing = false;
-        writeRelayPin(RELAY_PINS[i], false);
+        releaseRelayPins(i);
     }
     cfg_.pump.mode = MODE_OFF;
     pump_.boost_until = 0;
@@ -440,7 +469,7 @@ void Controller::allOff(time_t now) {
 }
 
 void Controller::allAuto(time_t now) {
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < channelCount(); i++) {
         cfg_.channels[i].mode = MODE_AUTO;
         relay_[i].boost_until = 0;
     }

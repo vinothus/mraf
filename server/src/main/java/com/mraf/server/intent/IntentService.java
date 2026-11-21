@@ -24,7 +24,7 @@ public class IntentService {
     }
 
     public ObjectNode handle(String deviceId, String text) {
-        IntentParser.Intent intent = parser.parse(text);
+        IntentParser.Intent intent = parser.parse(text, state.activeRelayCount(deviceId));
         ObjectNode out = mapper.createObjectNode();
         out.put("deviceId", deviceId);
         out.put("input", text == null ? "" : text);

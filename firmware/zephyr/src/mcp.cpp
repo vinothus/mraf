@@ -67,7 +67,7 @@ static void statusSummary(JsonDocument &out)
     o["fw"] = FW_VERSION;
     o["now"] = (uint32_t)now;
     o["now_local"] = localTimeString(now);
-    o["profile"] = profileName(g_cfg.profile);
+    o["profile"] = g_cfg.profile_id;
     o["power"] = g_ctrl.powerPresent();
     o["battery_v"] = g_ctrl.batteryVoltage();
     o["tank_full"] = g_ctrl.pump().tank_full;
@@ -80,7 +80,7 @@ static void statusSummary(JsonDocument &out)
     p["fault"] = g_ctrl.pump().fault;
 
     JsonArray relays = o["relays"].to<JsonArray>();
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         JsonObject r = relays.add<JsonObject>();
         r["id"] = i + 1;
         r["name"] = g_ctrl.config().channels[i].name;

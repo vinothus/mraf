@@ -57,9 +57,16 @@ static void updateStatusLed(void)
 
 int main(void)
 {
+    printk("MRAF %s: booting\n", FW_VERSION);
+
     mraf_platform_init();
+    printk("MRAF: platform init done\n");
+
     mraf_storage_init();
+    printk("MRAF: storage init done\n");
+
     mraf_state_init();
+    printk("MRAF: settings/state init done (ssid=\"%s\")\n", g_cfg.wifi_ssid);
 
     ensureDeviceId();
     g_ctrl.applyConfig(g_cfg);
@@ -86,7 +93,10 @@ int main(void)
     g_ctrl.addEvent("system", "boot", mraf_now());
     k_mutex_unlock(&g_state_lock);
 
+    printk("MRAF: starting network (AP+STA)\n");
     mraf_platform_start_network(g_cfg);
+    printk("MRAF: network start requested\n");
+
     mraf_api_init();
     mraf_api_start();
     mraf_remote_start();

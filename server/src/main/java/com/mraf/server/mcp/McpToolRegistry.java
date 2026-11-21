@@ -50,10 +50,10 @@ public class McpToolRegistry {
                         List.of(Param.req("device_id", "string", "Controller id, e.g. ESP32-ABC123"))),
                 tool("request_data", "Ask a controller to send a fresh status snapshot.",
                         List.of(Param.req("device_id", "string", "Controller id"))),
-                tool("control_relay", "Switch or pulse one relay (1..12).",
+                tool("control_relay", "Switch or pulse one relay (1..relay_count, max 12).",
                         List.of(
                                 Param.req("device_id", "string", "Controller id"),
-                                Param.req("relay_id", "integer", "Relay id 1..12"),
+                                Param.req("relay_id", "integer", "Relay id 1..relay_count (max 12)"),
                                 Param.req("mode", "string", "auto | on | off"),
                                 Param.opt("pulse_ms", "integer", "Momentary pulse length in ms (20..10000)"))),
                 tool("control_pump", "Control the pump contactor, optionally with a boost window.",

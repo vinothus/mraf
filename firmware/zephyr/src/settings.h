@@ -27,6 +27,7 @@ uint16_t hhmmToMinutes(const char *s);              // 0xFFFF on error
 void minutesToHHMM(uint16_t m, char *out, size_t n);
 const char *modeName(RunMode m);
 RunMode modeFromString(const char *s, bool &ok);
+bool settingsSetProfile(Config &cfg, const char *id);
 const char *profileName(uint8_t p);
 const char *equipmentName(uint8_t e);
 const char *repeatName(uint8_t r);

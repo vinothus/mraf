@@ -82,6 +82,17 @@ The shared dashboard shows a **Simulator** card when `status.simulator` is true:
 These controls call the `/api/sim/*` endpoints. The firmware does not expose
 them.
 
+## Hardware self test
+
+The **Settings → Hardware self test → Run self test** button calls
+`POST /api/selftest`. The result is a hardware-oriented checklist: ESP32
+firmware, RTC clock, power rail and battery ADC, Wi-Fi radio, unique GPIO
+driver map, every relay coil (START/STOP pins are pulsed and released), pump
+contactor, current sensor and both float inputs. Each line reports PASS, WARN or
+FAIL with the GPIO/pin and the reading that was checked, followed by an overall
+summary such as `PASS · 18/18 checks passed`. The simulator restores every
+relay output after the test.
+
 ## Clock model
 
 `SimClock` stores a base epoch and a monotonic base time. The current simulated

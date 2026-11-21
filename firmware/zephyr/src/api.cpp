@@ -12,6 +12,7 @@
 #include <zephyr/net/http/service.h>
 #include <zephyr/net/http/status.h>
 #include <zephyr/sys/base64.h>
+#include <zephyr/sys/printk.h>
 
 #include "api.h"
 #include "config.h"
@@ -29,6 +30,7 @@ enum RouteId {
     R_ROOT,
     R_HEALTH,
     R_STATUS,
+    R_SELFTEST,
     R_CONFIG,
     R_CONTROL,
     R_PUMP_RESET,
@@ -98,6 +100,20 @@ static const struct http_header g_hdr_401[] = {
 static void sendJson(JsonDocument &doc, int status, struct http_response_ctx *response)
 {
     size_t n = serializeJson(doc, g_resp, sizeof(g_resp));
+    if (n == 0 || n <= 2) {
+        // Allocation failed: ArduinoJson with exceptions off silently drops
+        // the values, leaving an empty document that serializes as "{}".
+        // Answer with a pre-serialized fallback instead of an empty body.
+        static const char fallback[] =
+            "{\"ok\":false,\"error\":\"device out of memory, retry or reboot\"}";
+        response->status = (enum http_status)status;
+        response->headers = status == 401 ? g_hdr_401 : g_hdr_json;
+        response->header_count = status == 401 ? 3 : 2;
+        response->body = (const uint8_t *)fallback;
+        response->body_len = sizeof(fallback) - 1;
+        response->final_chunk = true;
+        return;
+    }
     response->status = (enum http_status)status;
     response->headers = status == 401 ? g_hdr_401 : g_hdr_json;
     response->header_count = status == 401 ? 3 : 2;
@@ -124,6 +140,23 @@ static void copyField(char *dst, size_t n, const char *src)
     }
     strncpy(dst, src, n - 1);
     dst[n - 1] = '\0';
+}
+
+// Turn an ArduinoJson deserialization failure into something an operator can
+// act on. "NoMemory" on the ESP32 usually means the system heap is exhausted
+// by the Wi-Fi/peer stacks, not that the request was malformed.
+static const char *jsonErrText(DeserializationError err)
+{
+    switch (err.code()) {
+    case DeserializationError::NoMemory:
+        return "out of memory while parsing request";
+    case DeserializationError::EmptyInput:
+        return "empty request body";
+    case DeserializationError::IncompleteInput:
+        return "truncated request body";
+    default:
+        return err.c_str();
+    }
 }
 
 static bool headerIs(const char *name, const char *want)
@@ -219,6 +252,8 @@ static int route_cb(struct http_client_ctx *client, enum http_transaction_status
         }
         appendBody(route, request);
         route.buf[route.len] = '\0';
+        printk("MRAF: HTTP method=%d url=%s auth=%d\n", (int)client->method,
+               client->url_buffer, route.auth_ok ? 1 : 0);
 
         if (!route.auth_ok) {
             sendError(401, "authentication required", response);
@@ -255,6 +290,58 @@ static int route_cb(struct http_client_ctx *client, enum http_transaction_status
         route.auth_ok = false;
     }
     return 0;
+}
+
+static bool selfTestSafePin(uint8_t pin)
+{
+    static const uint8_t pins[] = {2,4,5,12,13,14,15,16,17,18,19,21,22,23,
+                                   25,26,27,32,33};
+    for (size_t i = 0; i < sizeof(pins); i++) {
+        if (pins[i] == pin) return true;
+    }
+    return false;
+}
+
+static uint8_t selfTestChannelCount(const Config &cfg)
+{
+    uint8_t n = cfg.relay_count ? cfg.relay_count : MAX_CHANNELS;
+    return n > MAX_CHANNELS ? MAX_CHANNELS : n;
+}
+
+static uint8_t selfTestRelayPin(const Config &cfg, uint8_t i)
+{
+    return cfg.relay_pins[i] ? cfg.relay_pins[i] : RELAY_PINS[i];
+}
+
+static uint8_t selfTestRelayOffPin(const Config &cfg, uint8_t i)
+{
+    uint8_t pin = cfg.relay_off_pins[i] ? cfg.relay_off_pins[i] : selfTestRelayPin(cfg, i);
+    return pin ? pin : RELAY_PINS[i];
+}
+
+static uint8_t selfTestPumpPin(const Config &cfg)
+{
+    return cfg.pump_pin ? cfg.pump_pin : PUMP_RELAY_PIN;
+}
+
+static void selfTestWritePin(uint8_t pin, bool on)
+{
+    digitalWrite(pin, RELAY_ACTIVE_LOW ? (on ? LOW : HIGH) : (on ? HIGH : LOW));
+}
+
+static bool selfTestPinEnergized(uint8_t pin)
+{
+    int raw = digitalRead(pin);
+    return RELAY_ACTIVE_LOW ? raw == LOW : raw == HIGH;
+}
+
+static void addSelfTestCheck(JsonArray checks, const char *name, bool ok,
+                             const char *detail, const char *severity = "fail")
+{
+    JsonObject check = checks.add<JsonObject>();
+    check["name"] = name;
+    check["status"] = ok ? "pass" : severity;
+    check["detail"] = detail;
 }
 
 // --- handlers -------------------------------------------------------------
@@ -402,6 +489,178 @@ static int h_status(Route &, const struct http_request_ctx *, struct http_respon
     return 0;
 }
 
+static int h_selftest(Route &, const struct http_request_ctx *, struct http_response_ctx *response)
+{
+    JsonDocument status;
+    Config cfg;
+    k_mutex_lock(&g_state_lock, K_FOREVER);
+    mraf_build_status(status);
+    cfg = g_cfg;
+    k_mutex_unlock(&g_state_lock);
+
+    JsonDocument doc;
+    JsonArray checks = doc["checks"].to<JsonArray>();
+    char detail[192];
+    char name[48];
+
+    JsonObject wifi = status["wifi"].as<JsonObject>();
+    JsonObject power = status["power"].as<JsonObject>();
+    JsonObject sensors = status["sensors"].as<JsonObject>();
+    JsonObject pump = status["pump"].as<JsonObject>();
+
+    snprintf(detail, sizeof(detail), "%s %s responsive", mraf_platform_name(),
+             (const char *)(status["fw"] | FW_VERSION));
+    addSelfTestCheck(checks, "ESP32 controller", true, detail);
+
+    bool timeValid = status["time_valid"] | false;
+    snprintf(detail, sizeof(detail), "Device time %s · %s",
+             (const char *)(status["now_local"] | ""),
+             timeValid ? "valid" : "unsynchronised");
+    addSelfTestCheck(checks, "RTC clock", timeValid, detail);
+
+    float batteryV = power["battery_v"] | 0.0f;
+    bool mains = power["present"] | false;
+    snprintf(detail, sizeof(detail), "Mains %s · battery-backed %.2f V",
+             mains ? "present" : "outage", (double)batteryV);
+    addSelfTestCheck(checks, "Power rail", mains, detail, "warn");
+    addSelfTestCheck(checks, "Battery ADC", batteryV >= 11.0f, detail);
+
+    bool wifiConnected = wifi["connected"] | false;
+    snprintf(detail, sizeof(detail), "%s · %s · %d dBm",
+             (const char *)(wifi["ssid"] | ""), (const char *)(wifi["ip"] | ""),
+             (int)(wifi["rssi"] | 0));
+    addSelfTestCheck(checks, "Wi-Fi radio", wifiConnected, detail);
+
+    uint8_t channels = selfTestChannelCount(cfg);
+    uint8_t used[2 * MAX_CHANNELS + 1];
+    size_t usedCount = 0;
+    bool pinsOk = true;
+    for (uint8_t i = 0; i < channels; i++) {
+        uint8_t pins[2] = {selfTestRelayPin(cfg, i), selfTestRelayOffPin(cfg, i)};
+        int count = pins[1] == pins[0] ? 1 : 2;
+        for (int n = 0; n < count; n++) {
+            uint8_t pin = pins[n];
+            if (!selfTestSafePin(pin)) pinsOk = false;
+            for (size_t j = 0; j < usedCount; j++) {
+                if (used[j] == pin) pinsOk = false;
+            }
+            if (usedCount < sizeof(used)) used[usedCount++] = pin;
+        }
+    }
+    uint8_t pumpPin = selfTestPumpPin(cfg);
+    if (!selfTestSafePin(pumpPin)) pinsOk = false;
+    for (size_t j = 0; j < usedCount; j++) {
+        if (used[j] == pumpPin) pinsOk = false;
+    }
+    snprintf(detail, sizeof(detail), "%u relays + pump on unique safe GPIOs", (unsigned)channels);
+    addSelfTestCheck(checks, "GPIO driver map", pinsOk, detail);
+
+    k_mutex_lock(&g_state_lock, K_FOREVER);
+    for (uint8_t i = 0; i < channels; i++) {
+        uint8_t pins[2] = {selfTestRelayPin(cfg, i), selfTestRelayOffPin(cfg, i)};
+        int count = pins[1] == pins[0] ? 1 : 2;
+        bool ok = true;
+        char labels[96] = "";
+        for (int n = 0; n < count; n++) {
+            uint8_t pin = pins[n];
+            if (!selfTestSafePin(pin)) {
+                ok = false;
+                continue;
+            }
+            int saved = digitalRead(pin);
+            selfTestWritePin(pin, true);
+            k_msleep(20);
+            bool energized = selfTestPinEnergized(pin);
+            selfTestWritePin(pin, false);
+            k_msleep(5);
+            bool released = !selfTestPinEnergized(pin);
+            digitalWrite(pin, saved);
+            ok = ok && energized && released;
+            char label[24];
+            snprintf(label, sizeof(label), "%s GPIO %u", n == 0 ? "START" : "STOP",
+                     (unsigned)pin);
+            if (labels[0]) strncat(labels, ", ", sizeof(labels) - strlen(labels) - 1);
+            strncat(labels, label, sizeof(labels) - strlen(labels) - 1);
+        }
+        snprintf(detail, sizeof(detail), "%s · coil %s", labels,
+                 ok ? "pulse/release OK" : "driver readback mismatch");
+        snprintf(name, sizeof(name), "Relay %u driver", (unsigned)(i + 1));
+        addSelfTestCheck(checks, name, ok, detail);
+    }
+
+    bool pumpOk = pinsOk;
+    if (selfTestSafePin(pumpPin)) {
+        int saved = digitalRead(pumpPin);
+        selfTestWritePin(pumpPin, true);
+        k_msleep(20);
+        bool energized = selfTestPinEnergized(pumpPin);
+        selfTestWritePin(pumpPin, false);
+        k_msleep(5);
+        bool released = !selfTestPinEnergized(pumpPin);
+        digitalWrite(pumpPin, saved);
+        pumpOk = pumpOk && energized && released;
+    }
+    k_mutex_unlock(&g_state_lock);
+    const char *pumpFault = pump["fault"] | "";
+    if (!pumpFault[0]) pumpFault = "none";
+    snprintf(detail, sizeof(detail), "GPIO %u · state %s · fault %s", (unsigned)pumpPin,
+             (const char *)(pump["state"] | ""), pumpFault);
+    addSelfTestCheck(checks, "Pump contactor", pumpOk, detail);
+
+    float currentA = pump["current_a"] | 0.0f;
+    snprintf(detail, sizeof(detail), "ACS712 reads %.2f A · zero %.0f mV", (double)currentA,
+             (double)(sensors["acs_zero_mv"] | 1250.0f));
+    addSelfTestCheck(checks, "Current sensor", currentA >= 0.0f && currentA <= 30.0f, detail);
+
+    bool tankFull = sensors["tank_full"] | false;
+    snprintf(detail, sizeof(detail), "input %s · %s", tankFull ? "active" : "idle",
+             tankFull ? "FULL" : "OK");
+    addSelfTestCheck(checks, "Tank float", true, detail);
+
+    bool sumpDry = sensors["sump_dry"] | false;
+    snprintf(detail, sizeof(detail), "input %s · %s", sumpDry ? "active" : "idle",
+             sumpDry ? "DRY" : "OK");
+    addSelfTestCheck(checks, "Sump float", true, detail);
+
+    int passed = 0;
+    int warned = 0;
+    int failed = 0;
+    for (JsonVariant check : checks) {
+        const char *state = check["status"] | "";
+        if (strcmp(state, "pass") == 0) passed++;
+        else if (strcmp(state, "warn") == 0) warned++;
+        else failed++;
+    }
+    int total = passed + warned + failed;
+
+    time_t finishedAt = (time_t)(uint32_t)(status["now"] | 0);
+    struct tm tm;
+    char finished[32] = "just now";
+    if (finishedAt > 0 && localtime_r(&finishedAt, &tm) != nullptr) {
+        strftime(finished, sizeof(finished), "%Y-%m-%d %H:%M:%S", &tm);
+    }
+
+    const char *result = failed == 0 ? "PASS" : "FAIL";
+    char summary[128];
+    if (warned) {
+        snprintf(summary, sizeof(summary), "%s · %d/%d checks passed, %d warning(s)",
+                 result, passed, total, warned);
+    } else {
+        snprintf(summary, sizeof(summary), "%s · %d/%d checks passed",
+                 result, passed, total);
+    }
+    doc["ok"] = failed == 0;
+    doc["result"] = result;
+    doc["summary"] = summary;
+    doc["passed"] = passed;
+    doc["warnings"] = warned;
+    doc["failed"] = failed;
+    doc["total"] = total;
+    doc["finished"] = finished;
+    sendJson(doc, 200, response);
+    return 0;
+}
+
 static int h_config_get(Route &, const struct http_request_ctx *, struct http_response_ctx *response)
 {
     JsonDocument d;
@@ -415,52 +674,87 @@ static int h_config_get(Route &, const struct http_request_ctx *, struct http_re
 static int h_config_post(Route &route, const struct http_request_ctx *,
                          struct http_response_ctx *response)
 {
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, route.buf, route.len);
-    if (err) {
-        sendError(400, err.c_str(), response);
-        return 0;
-    }
-
     bool reboot = false;
-    JsonDocument out;
-    k_mutex_lock(&g_state_lock, K_FOREVER);
-    Config old = g_cfg;
+    bool wrtc_changed = false;
     String error;
-    if (!settingsFromJson(doc, g_cfg, error)) {
-        g_cfg = old;
-        k_mutex_unlock(&g_state_lock);
-        sendError(400, error.c_str(), response);
-        return 0;
-    }
 
-    reboot = strcmp(old.wifi_ssid, g_cfg.wifi_ssid) != 0 ||
-             strcmp(old.wifi_pass, g_cfg.wifi_pass) != 0 ||
-             strcmp(old.hostname, g_cfg.hostname) != 0 ||
-             strcmp(old.auth_user, g_cfg.auth_user) != 0 ||
-             strcmp(old.auth_pass, g_cfg.auth_pass) != 0;
+    // The request document holds the parsed body (~3-4 KiB on the heap for a
+    // dashboard-sized config) and the NVS save below builds another one. On
+    // the ESP32 the system heap is small, so scope the request document so it
+    // is released before settingsSave() and the response are built.
+    k_mutex_lock(&g_state_lock, K_FOREVER);
+    {
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, route.buf, route.len);
+        if (err) {
+            k_mutex_unlock(&g_state_lock);
+            sendError(400, jsonErrText(err), response);
+            return 0;
+        }
 
-    // A new control-plane URL or new STUN/TURN overrides must be re-read from
-    // the server; otherwise the peer keeps the previous advertisement until
-    // the next reboot.
-    bool wrtc_changed = old.webrtc.enabled != g_cfg.webrtc.enabled ||
-             strcmp(old.webrtc.server, g_cfg.webrtc.server) != 0 ||
-             strcmp(old.webrtc.stun, g_cfg.webrtc.stun) != 0 ||
-             strcmp(old.webrtc.turn, g_cfg.webrtc.turn) != 0 ||
-             strcmp(old.webrtc.turn_user, g_cfg.webrtc.turn_user) != 0 ||
-             strcmp(old.webrtc.turn_pass, g_cfg.webrtc.turn_pass) != 0 ||
-             old.webrtc.poll_ms != g_cfg.webrtc.poll_ms;
+        char old_wifi_ssid[sizeof(g_cfg.wifi_ssid)];
+        char old_wifi_pass[sizeof(g_cfg.wifi_pass)];
+        char old_hostname[sizeof(g_cfg.hostname)];
+        char old_auth_user[sizeof(g_cfg.auth_user)];
+        char old_auth_pass[sizeof(g_cfg.auth_pass)];
+        bool old_wrtc_enabled = g_cfg.webrtc.enabled;
+        char old_wrtc_server[sizeof(g_cfg.webrtc.server)];
+        char old_wrtc_stun[sizeof(g_cfg.webrtc.stun)];
+        char old_wrtc_turn[sizeof(g_cfg.webrtc.turn)];
+        char old_wrtc_turn_user[sizeof(g_cfg.webrtc.turn_user)];
+        char old_wrtc_turn_pass[sizeof(g_cfg.webrtc.turn_pass)];
+        uint16_t old_wrtc_poll_ms = g_cfg.webrtc.poll_ms;
+        copyField(old_wifi_ssid, sizeof(old_wifi_ssid), g_cfg.wifi_ssid);
+        copyField(old_wifi_pass, sizeof(old_wifi_pass), g_cfg.wifi_pass);
+        copyField(old_hostname, sizeof(old_hostname), g_cfg.hostname);
+        copyField(old_auth_user, sizeof(old_auth_user), g_cfg.auth_user);
+        copyField(old_auth_pass, sizeof(old_auth_pass), g_cfg.auth_pass);
+        copyField(old_wrtc_server, sizeof(old_wrtc_server), g_cfg.webrtc.server);
+        copyField(old_wrtc_stun, sizeof(old_wrtc_stun), g_cfg.webrtc.stun);
+        copyField(old_wrtc_turn, sizeof(old_wrtc_turn), g_cfg.webrtc.turn);
+        copyField(old_wrtc_turn_user, sizeof(old_wrtc_turn_user), g_cfg.webrtc.turn_user);
+        copyField(old_wrtc_turn_pass, sizeof(old_wrtc_turn_pass), g_cfg.webrtc.turn_pass);
 
-    settingsSave(g_cfg);
+        if (!settingsFromJson(doc, g_cfg, error)) {
+            k_mutex_unlock(&g_state_lock);
+            sendError(400, error.c_str(), response);
+            return 0;
+        }
+
+        reboot = strcmp(old_wifi_ssid, g_cfg.wifi_ssid) != 0 ||
+                 strcmp(old_wifi_pass, g_cfg.wifi_pass) != 0 ||
+                 strcmp(old_hostname, g_cfg.hostname) != 0 ||
+                 strcmp(old_auth_user, g_cfg.auth_user) != 0 ||
+                 strcmp(old_auth_pass, g_cfg.auth_pass) != 0;
+
+        // A new control-plane URL or new STUN/TURN overrides must be re-read
+        // from the server; otherwise the peer keeps the previous
+        // advertisement until the next reboot.
+        wrtc_changed = old_wrtc_enabled != g_cfg.webrtc.enabled ||
+                 strcmp(old_wrtc_server, g_cfg.webrtc.server) != 0 ||
+                 strcmp(old_wrtc_stun, g_cfg.webrtc.stun) != 0 ||
+                 strcmp(old_wrtc_turn, g_cfg.webrtc.turn) != 0 ||
+                 strcmp(old_wrtc_turn_user, g_cfg.webrtc.turn_user) != 0 ||
+                 strcmp(old_wrtc_turn_pass, g_cfg.webrtc.turn_pass) != 0 ||
+                 old_wrtc_poll_ms != g_cfg.webrtc.poll_ms;
+    } // request document freed here
+
+    bool saved = settingsSave(g_cfg);
     g_ctrl.applyConfig(g_cfg);
     mraf_set_timezone(g_cfg.timezone);
-    settingsToJson(g_cfg, out, false);
     k_mutex_unlock(&g_state_lock);
 
     if (wrtc_changed) {
         mraf_webrtc_config_changed();
     }
 
+    // The browser reloads the config after saving, so the reply only carries
+    // the save status instead of the whole document again.
+    if (!saved) {
+        sendError(500, "failed to persist settings", response);
+        return 0;
+    }
+    JsonDocument out;
     out["ok"] = true;
     out["reboot_required"] = reboot;
     sendJson(out, 200, response);
@@ -843,6 +1137,12 @@ static struct http_resource_detail_dynamic d_status = {
     .cb = route_cb,
     .user_data = &g_routes[R_STATUS],
 };
+static struct http_resource_detail_dynamic d_selftest = {
+    .common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+               .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+    .cb = route_cb,
+    .user_data = &g_routes[R_SELFTEST],
+};
 static struct http_resource_detail_dynamic d_config = {
     .common = {.bitmask_of_supported_http_methods = BIT(HTTP_GET) | BIT(HTTP_POST),
                .type = HTTP_RESOURCE_TYPE_DYNAMIC},
@@ -960,6 +1260,7 @@ static struct http_resource_detail_dynamic d_not_found = {
 HTTP_RESOURCE_DEFINE(res_root, mraf_http, "/", &d_root);
 HTTP_RESOURCE_DEFINE(res_health, mraf_http, "/health", &d_health);
 HTTP_RESOURCE_DEFINE(res_status, mraf_http, "/api/status", &d_status);
+HTTP_RESOURCE_DEFINE(res_selftest, mraf_http, "/api/selftest", &d_selftest);
 HTTP_RESOURCE_DEFINE(res_config, mraf_http, "/api/config", &d_config);
 HTTP_RESOURCE_DEFINE(res_control, mraf_http, "/api/control", &d_control);
 HTTP_RESOURCE_DEFINE(res_pump_reset, mraf_http, "/api/pump/reset", &d_pump_reset);
@@ -984,7 +1285,7 @@ HTTP_RESOURCE_DEFINE(res_sim_reset, mraf_http, "/api/sim/reset", &d_sim_reset);
 
 HTTP_SERVER_REGISTER_HEADER_CAPTURE(capture_auth, "Authorization");
 
-HTTP_SERVICE_DEFINE(mraf_http, nullptr, &g_http_port, 4, 4, nullptr,
+HTTP_SERVICE_DEFINE(mraf_http, "0.0.0.0", &g_http_port, 4, 4, nullptr,
                     &d_not_found.common, nullptr);
 
 void mraf_api_init(void)
@@ -1001,6 +1302,7 @@ void mraf_api_init(void)
     initRoute(R_ROOT, h_root, g_buf_small, sizeof(g_buf_small), false);
     initRoute(R_HEALTH, h_health, g_buf_small, sizeof(g_buf_small), true);
     initRoute(R_STATUS, h_status, g_buf_small, sizeof(g_buf_small), false);
+    initRoute(R_SELFTEST, h_selftest, g_buf_small, sizeof(g_buf_small), false);
     initRoute(R_CONFIG, h_config_post, g_buf_config, sizeof(g_buf_config), false);
     initRoute(R_CONTROL, h_control, g_buf_control, sizeof(g_buf_control), false);
     initRoute(R_PUMP_RESET, h_pump_reset, g_buf_small, sizeof(g_buf_small), false);
@@ -1032,8 +1334,11 @@ uint16_t mraf_api_port(void)
 
 void mraf_api_start(void)
 {
+    printk("MRAF: HTTP service host=0.0.0.0 port=%d\n", g_http_port);
     int ret = http_server_start();
     if (ret < 0) {
         printk("HTTP server start failed: %d\n", ret);
+    } else {
+        printk("MRAF: HTTP server listening on port %d\n", g_http_port);
     }
 }

@@ -2,11 +2,12 @@
 """Native tests for the MRAF simulator/controller. Stdlib only."""
 import copy
 import json
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from mraf_sim import (
@@ -16,6 +17,7 @@ from mraf_sim import (
     SimHTTPServer,
     SimHandler,
     load_config,
+    merge_config,
     normalize_config,
     parse_intent,
 )
@@ -348,6 +350,19 @@ class ApiTests(unittest.TestCase):
         self.assertIn("pump", status)
         self.assertTrue(status["simulator"])
 
+    def test_self_test_reports_hardware_checks(self):
+        data = self.post("/api/selftest", {})
+        self.assertTrue(data["ok"])
+        self.assertIn("PASS", data["summary"])
+        self.assertGreaterEqual(data["total"], 18)
+        names = [c["name"] for c in data["checks"]]
+        self.assertIn("ESP32 controller", names)
+        self.assertIn("Relay 1 driver", names)
+        self.assertIn("Pump contactor", names)
+        relay = next(c for c in data["checks"] if c["name"] == "Relay 1 driver")
+        self.assertIn("GPIO", relay["detail"])
+        self.assertEqual(relay["status"], "pass")
+
     def test_auth_required_when_configured(self):
         self.app.auth = ("admin", "farm1234")
         with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -417,6 +432,107 @@ class ApiTests(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(r.status, 202)
             self.assertEqual(r.read(), b"")
+
+
+class ProfileTests(unittest.TestCase):
+    def sample_profile(self):
+        return {
+            "id": "greenhouse", "name": "Greenhouse", "unit": "Bay",
+            "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27],
+                     "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27],
+                     "pump": 32},
+            "channels": [
+                {"id": 1, "name": "Misting", "equipment": "valve",
+                 "pulse_mode": True, "pulse_on_ms": 800, "pulse_off_ms": 900,
+                 "on": "05:30", "off": "05:45", "enabled": True, "days": 21}
+            ],
+        }
+
+    def test_custom_profile_and_runtime_pins(self):
+        cfg = load_config(CONFIG)
+        cfg["device"]["profile"] = "greenhouse"
+        cfg["profiles"] = [self.sample_profile()]
+        cfg["pins"] = self.sample_profile()["pins"]
+        out = normalize_config(cfg)
+        self.assertEqual(out["device"]["profile"], "greenhouse")
+        self.assertEqual(out["pins"]["pump"], 32)
+        self.assertEqual(out["profiles"][0]["relay_count"], 1)
+        self.assertEqual(out["profiles"][0]["channels"][0]["pulse_on_ms"], 800)
+        self.assertEqual(len(out["profiles"][0]["channels"]), 1)
+
+    def test_relay_count_limits_channels_and_status(self):
+        cfg = normalize_config(load_config(CONFIG))
+        cfg["relay_count"] = 2
+        out = normalize_config(cfg)
+        self.assertEqual(len(out["channels"]), 2)
+        self.assertEqual(out["channels"][1]["id"], 2)
+        app = SimApp(out, speed=0)
+        self.assertEqual(len(app.snapshot()["relays"]), 2)
+        with self.assertRaises(ConfigError):
+            app.control("relay", "on", 3)
+
+    def test_relay_count_merge_trims_channels(self):
+        cfg = load_config(CONFIG)
+        merged = merge_config(cfg, {"relay_count": 2, "channels": [{"id": 1}, {"id": 2}]})
+        out = normalize_config(merged)
+        self.assertEqual(out["relay_count"], 2)
+        self.assertEqual(len(out["channels"]), 2)
+
+    def test_duplicate_gpio_rejected(self):
+        cfg = load_config(CONFIG)
+        cfg["pins"] = {"relays": [13] * 12, "pump": 33}
+        with self.assertRaises(ConfigError):
+            normalize_config(cfg)
+
+    def test_invalid_gpio_rejected(self):
+        cfg = load_config(CONFIG)
+        cfg["pins"]["pump"] = 34  # input-only on ESP32
+        with self.assertRaises(ConfigError):
+            normalize_config(cfg)
+
+    def test_motor_contactor_pulses_start_then_stop_pin(self):
+        cfg = normalize_config(load_config(CONFIG))
+        cfg["pins"]["relays_off"][4] = 32
+        ch = cfg["channels"][4]
+        ch["pulse_mode"] = True
+        ch["pulse_on_ms"] = 120
+        ch["pulse_off_ms"] = 180
+        ctrl = FarmController(cfg, timezone.utc)
+
+        ctrl.set_relay_mode(4, "on", 0, 1000)
+        rt = ctrl.relays[4]
+        self.assertEqual(rt.pulse_pin, 18)
+        self.assertAlmostEqual(rt.pulse_until, 1000.12)
+        ctrl.service_pulses(1000.13)
+        self.assertFalse(rt.output)
+
+        ctrl.set_relay_mode(4, "off", 0, 2000)
+        self.assertEqual(rt.pulse_pin, 32)
+        self.assertAlmostEqual(rt.pulse_until, 2000.18)
+        ctrl.service_pulses(2000.19)
+        self.assertFalse(rt.output)
+
+    def test_stop_pin_must_be_unique(self):
+        cfg = load_config(CONFIG)
+        cfg["pins"]["relays_off"][0] = cfg["pins"]["relays"][1]
+        with self.assertRaises(ConfigError):
+            normalize_config(cfg)
+
+    def test_profile_config_is_persisted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps(load_config(CONFIG)), encoding="utf-8")
+            app = SimApp(load_config(CONFIG), speed=0, config_path=path)
+            profile = self.sample_profile()
+            app.set_config({"device": {"profile": "greenhouse"},
+                            "pins": profile["pins"],
+                            "profiles": [profile],
+                            "channels": [{"id": 1, "name": "Misting"}]})
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["device"]["profile"], "greenhouse")
+            self.assertEqual(saved["pins"]["pump"], 32)
+            self.assertEqual(saved["profiles"][0]["id"], "greenhouse")
+            self.assertEqual(app.config_api()["channels"][0]["name"], "Misting")
 
 
 if __name__ == "__main__":

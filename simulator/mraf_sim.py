@@ -35,9 +35,15 @@ FW_VERSION = "1.1.0"
 MAX_CHANNELS = 12
 MAX_WINDOWS = 4
 MAX_RECURRING = 8
+MAX_PROFILES = 16
 EVENT_LOG_SIZE = 200
 MODES = ("auto", "on", "off")
 PROFILES = ("agri", "home", "godown", "industry")
+PROFILE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,22}$")
+GPIO_PINS = frozenset({2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23,
+                       25, 26, 27, 32, 33})
+DEFAULT_RELAY_PINS = [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27]
+DEFAULT_PUMP_PIN = 33
 EQUIPMENT = ("valve", "light", "motor", "fan", "pump", "socket", "heater",
              "door", "other")
 REPEATS = ("daily", "weekly", "monthly", "yearly")
@@ -133,8 +139,14 @@ def merge_config(base: dict, incoming: dict) -> dict:
     if not isinstance(incoming, dict):
         raise ConfigError("config must be a JSON object")
     out = copy.deepcopy(base)
-    for key in ("device", "wifi", "coap", "safety", "webrtc"):
+    for key in ("device", "wifi", "coap", "safety", "webrtc", "pins"):
         _merge_section(out, incoming, key)
+
+    if "profiles" in incoming:
+        out["profiles"] = copy.deepcopy(incoming["profiles"])
+
+    if "relay_count" in incoming:
+        out["relay_count"] = incoming["relay_count"]
 
     chans = incoming.get("channels")
     if chans is not None:
@@ -237,6 +249,103 @@ def _recurring(value: Any) -> list[dict]:
     return out
 
 
+def _pins(value: Any, label: str) -> dict:
+    """Validate the ESP32-WROOM output map (relays 1..12 + pump contactor)."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{label}: must be an object")
+    relays = value.get("relays", DEFAULT_RELAY_PINS)
+    if not isinstance(relays, list) or len(relays) > MAX_CHANNELS:
+        raise ConfigError(f"{label}: relays must be an array of at most 12 GPIOs")
+    out = []
+    for i in range(MAX_CHANNELS):
+        raw = relays[i] if i < len(relays) else (DEFAULT_RELAY_PINS[i] if i < len(DEFAULT_RELAY_PINS) else 13)
+        out.append(_int(raw, DEFAULT_RELAY_PINS[i], 0, 39,
+                        f"{label}: relay {i + 1} GPIO"))
+    pump = _int(value.get("pump"), DEFAULT_PUMP_PIN, 0, 39, f"{label}: pump GPIO")
+    off_raw = value.get("relays_off", [])
+    if not isinstance(off_raw, list) or len(off_raw) > MAX_CHANNELS:
+        raise ConfigError(f"{label}: relays_off must be an array of at most 12 GPIOs")
+    out_off = []
+    for i in range(MAX_CHANNELS):
+        raw = off_raw[i] if i < len(off_raw) else out[i]
+        out_off.append(_int(raw, out[i], 0, 39, f"{label}: relay {i + 1} stop GPIO"))
+    used = out + [pump]
+    for pin in used:
+        if pin not in GPIO_PINS:
+            raise ConfigError(f"{label}: GPIO {pin} is not a safe output pin")
+    if len(set(used)) != len(used):
+        raise ConfigError(f"{label}: each relay and the pump need a unique GPIO")
+    for i, pin in enumerate(out_off):
+        if pin == out[i]:
+            continue
+        if pin not in GPIO_PINS:
+            raise ConfigError(f"{label}: GPIO {pin} is not a safe output pin")
+        if pin in used:
+            raise ConfigError(f"{label}: STOP GPIO {pin} is already in use")
+        used.append(pin)
+    return {"relays": out, "relays_off": out_off, "pump": pump}
+
+
+def _profile(value: Any, index: int) -> dict:
+    if not isinstance(value, dict):
+        raise ConfigError(f"profile {index + 1}: must be an object")
+    label = f"profile {index + 1}"
+    pid = str(value.get("id") or "").strip().lower()
+    if not PROFILE_ID_RE.fullmatch(pid):
+        raise ConfigError(f"{label}: id must be a lowercase slug (letters, digits, -, _)")
+    channels = value.get("channels", [])
+    if not isinstance(channels, list) or len(channels) > MAX_CHANNELS:
+        raise ConfigError(f"{label}: channels must be an array of at most {MAX_CHANNELS}")
+    count = _int(value.get("relay_count"), len(channels) or 1, 1, MAX_CHANNELS,
+                 f"{label}: relay_count")
+    channels = channels[:count]
+    out_channels = []
+    for i in range(count):
+        ch = channels[i] if i < len(channels) else {}
+        if not isinstance(ch, dict):
+            raise ConfigError(f"{label}: channel {i + 1} must be an object")
+        equipment = str(ch.get("equipment") or "other")
+        if equipment not in EQUIPMENT:
+            raise ConfigError(f"{label}: channel {i + 1} has unknown equipment")
+        on = str(ch.get("on") or "06:00")
+        off = str(ch.get("off") or "07:00")
+        out_channels.append({
+            "id": i + 1,
+            "name": str(ch.get("name") or f"Relay {i + 1}")[:23],
+            "zone": str(ch.get("zone") or "")[:23],
+            "equipment": equipment,
+            "enabled": bool(ch.get("enabled", False)),
+            "days": _int(ch.get("days"), 0, 0, 127, f"{label}: channel {i + 1} days"),
+            "pulse_mode": bool(ch.get("pulse_mode", False)),
+            "pulse_on_ms": _int(ch.get("pulse_on_ms"), 600, 20, 10000,
+                                f"{label}: channel {i + 1} pulse_on_ms"),
+            "pulse_off_ms": _int(ch.get("pulse_off_ms"), 600, 20, 10000,
+                                 f"{label}: channel {i + 1} pulse_off_ms"),
+            "on": fmt_hhmm(parse_hhmm(on)),
+            "off": fmt_hhmm(parse_hhmm(off)),
+        })
+    return {
+        "id": pid,
+        "relay_count": count,
+        "name": str(value.get("name") or pid)[:39],
+        "unit": str(value.get("unit") or "Zone")[:15],
+        "pins": _pins(value.get("pins"), label),
+        "channels": out_channels,
+    }
+
+
+def _profiles(value: Any) -> list[dict]:
+    if not isinstance(value, list):
+        raise ConfigError("profiles must be an array")
+    if len(value) > MAX_PROFILES:
+        raise ConfigError(f"too many profiles (max {MAX_PROFILES})")
+    out = [_profile(p, i) for i, p in enumerate(value)]
+    ids = [p["id"] for p in out]
+    if len(set(ids)) != len(ids):
+        raise ConfigError("profiles: duplicate profile id")
+    return out
+
+
 def normalize_config(cfg: dict) -> dict:
     if not isinstance(cfg, dict):
         raise ConfigError("config must be an object")
@@ -249,17 +358,22 @@ def normalize_config(cfg: dict) -> dict:
     out.setdefault("safety", {})
     out.setdefault("pump", {})
     out.setdefault("channels", [])
+    out.setdefault("pins", {})
+    out.setdefault("profiles", [])
     if not isinstance(out["channels"], list):
         raise ConfigError("channels must be an array")
     if len(out["channels"]) > MAX_CHANNELS:
         raise ConfigError(f"too many channels (max {MAX_CHANNELS})")
+    out["relay_count"] = _int(out.get("relay_count"), len(out["channels"]) or 1,
+                              1, MAX_CHANNELS, "relay_count")
+    out["channels"] = out["channels"][:out["relay_count"]]
 
-    while len(out["channels"]) < MAX_CHANNELS:
+    while len(out["channels"]) < out["relay_count"]:
         i = len(out["channels"])
         out["channels"].append(
             {"id": i + 1, "name": f"Relay {i + 1}", "zone": f"Zone {i + 1}",
              "equipment": "other", "pulse_mode": False, "enabled": False,
-             "days": 0, "mode": "auto", "windows": []}
+             "days": 0, "mode": "auto", "windows": [], "pin_off": None}
         )
 
     for i, ch in enumerate(out["channels"]):
@@ -321,8 +435,8 @@ def normalize_config(cfg: dict) -> dict:
     dev["auth_pass"] = str(dev.get("auth_pass") or "farm1234")[:31]
     dev["device_id"] = str(dev.get("device_id") or "")[:23]
     dev["profile"] = str(dev.get("profile") or "agri")
-    if dev["profile"] not in PROFILES:
-        raise ConfigError("device: profile must be agri/home/godown/industry")
+    if not PROFILE_ID_RE.fullmatch(dev["profile"]):
+        raise ConfigError("device: profile must be a lowercase slug")
     out["wifi"]["ssid"] = str(out["wifi"].get("ssid") or "")[:32]
     out["wifi"]["password"] = str(out["wifi"].get("password") or "")[:64]
     out["wifi"]["hostname"] = str(out["wifi"].get("hostname") or "mraf")[:32]
@@ -370,6 +484,8 @@ def normalize_config(cfg: dict) -> dict:
     wrc["stun"] = str(wrc.get("stun") or "")[:127]
     wrc["poll_ms"] = _int(wrc.get("poll_ms"), 400, 100, 5000, "webrtc: poll_ms")
 
+    out["pins"] = _pins(out["pins"], "pins")
+    out["profiles"] = _profiles(out["profiles"])
     out["recurring"] = _recurring(out.get("recurring") or [])
     return out
 
@@ -524,6 +640,7 @@ class RelayRT:
     recurring: bool = False
     pulsing: bool = False
     pulse_until: float = 0.0    # epoch seconds
+    pulse_pin: int = 0          # GPIO being pulsed (START or STOP)
     boost_until: float = 0.0
     last_change: float = 0.0
 
@@ -670,10 +787,14 @@ class FarmController:
         )
         return sched or self.relays[i].boost_until > now
 
-    def _start_pulse(self, i: int, ms: int, now: float) -> None:
+    def _start_pulse(self, i: int, ms: int, now: float, on: bool = True) -> None:
         rt = self.relays[i]
+        pins = self.cfg["pins"]
+        start = pins["relays"][i]
+        stop = pins["relays_off"][i]
         rt.pulsing = True
         rt.output = True
+        rt.pulse_pin = start if on or stop == start else stop
         rt.pulse_until = now + max(20, int(ms)) / 1000.0
 
     def _set_relay_logical(self, i: int, on: bool, now: float) -> None:
@@ -683,7 +804,7 @@ class FarmController:
         rt.last_change = now
         if ch["pulse_mode"]:
             ms = ch["pulse_on_ms"] if on else ch["pulse_off_ms"]
-            self._start_pulse(i, ms, now)
+            self._start_pulse(i, ms, now, on)
         else:
             rt.output = on
 
@@ -692,6 +813,7 @@ class FarmController:
             if rt.pulsing and now >= rt.pulse_until:
                 rt.pulsing = False
                 rt.output = False
+                rt.pulse_pin = 0
 
     def _pump_wanted(self, power: bool, tank_full: bool, sump_dry: bool,
                      now_min: int, weekday: int, now: float) -> bool:
@@ -871,7 +993,7 @@ class FarmController:
     # -- user controls ------------------------------------------------------
     def set_relay_mode(self, index: int, mode: str, boost_min: int, now: float,
                        pulse_ms: int = 0) -> None:
-        if not 0 <= index < MAX_CHANNELS:
+        if not 0 <= index < len(self.cfg["channels"]):
             raise ConfigError("relay id must be 1..12")
         if mode not in MODES:
             raise ConfigError("mode must be auto/on/off")
@@ -1027,8 +1149,10 @@ class SimClock:
 class SimApp:
     def __init__(self, cfg: dict, speed: float = 60.0, auth: Optional[tuple[str, str]] = None,
                  index_html: Optional[str] = None, host: str = "0.0.0.0",
-                 port: int = 8080, verbose: bool = False):
+                 port: int = 8080, verbose: bool = False,
+                 config_path: Optional[Path] = None):
         self.cfg = normalize_config(cfg)
+        self.config_path = Path(config_path) if config_path else None
         self.tz = parse_tz(self.cfg["device"]["timezone"])
         self.controller = FarmController(self.cfg, self.tz)
         self.clock = SimClock(time.time(), speed)
@@ -1131,6 +1255,10 @@ class SimApp:
                 "id": i + 1,
                 "name": ch["name"],
                 "zone": ch["zone"],
+                "pin": self.cfg["pins"]["relays"][i],
+                "pin_off": self.cfg["pins"]["relays_off"][i],
+                "output_pin": (rt.pulse_pin if rt.pulsing
+                               else (self.cfg["pins"]["relays"][i] if rt.output else 0)),
                 "equipment": ch["equipment"],
                 "pulse_mode": ch["pulse_mode"],
                 "pulse_on_ms": ch["pulse_on_ms"],
@@ -1258,9 +1386,102 @@ class SimApp:
             self._advance_locked(now)
             return self._status_locked(now)
 
+    def self_test(self) -> dict:
+        with self.lock:
+            now = self.clock.now()
+            self._advance_locked(now)
+            status = self._status_locked(now)
+            checks = []
+
+            def add(name: str, ok: bool, detail: str, severity: str = "fail") -> None:
+                checks.append({
+                    "name": name,
+                    "status": "pass" if ok else severity,
+                    "detail": detail,
+                })
+
+            add("ESP32 controller", True, f"Firmware {FW_VERSION} responsive")
+            add("RTC clock", bool(status["time_valid"]),
+                f"Device time {status['now_local']} · "
+                f"{'valid' if status['time_valid'] else 'unsynchronised'}")
+            power = status["power"]
+            add("Power rail", power["present"],
+                f"Mains {'present' if power['present'] else 'outage'} · "
+                f"battery-backed {power['battery_v']:.2f} V", "warn")
+            add("Battery ADC", power["battery_v"] >= 11.0,
+                f"ADC reads {power['battery_v']:.2f} V")
+            wifi = status["wifi"]
+            add("Wi-Fi radio", bool(wifi["connected"]),
+                f"{wifi['ssid']} · {wifi['ip']} · {wifi['rssi']} dBm")
+            pins = self.cfg["pins"]
+            used = pins["relays"][:len(self.cfg["channels"])] + [pins["pump"]]
+            used += [pins["relays_off"][i] for i in range(len(self.cfg["channels"]))
+                      if pins["relays_off"][i] != pins["relays"][i]]
+            pin_ok = len(used) == len(set(used)) and all(p in GPIO_PINS for p in used)
+            add("GPIO driver map", pin_ok,
+                f"{len(self.cfg['channels'])} relays + pump on unique safe GPIOs")
+
+            for relay in status["relays"]:
+                i = relay["id"] - 1
+                rt = self.controller.relays[i]
+                saved = (rt.output, rt.pulsing, rt.pulse_until, rt.pulse_pin)
+                ok = True
+                labels = []
+                actions = [("START", True, relay["pin"])]
+                if relay["pin_off"] != relay["pin"]:
+                    actions.append(("STOP", False, relay["pin_off"]))
+                for label, on, expected in actions:
+                    self.controller._start_pulse(i, 20, now, on)
+                    observed = rt.pulse_pin
+                    self.controller.service_pulses(now + 0.021)
+                    released = not rt.pulsing and not rt.output and rt.pulse_pin == 0
+                    ok = ok and observed == expected and released
+                    labels.append(f"{label} GPIO {expected}")
+                rt.output, rt.pulsing, rt.pulse_until, rt.pulse_pin = saved
+                detail = ", ".join(labels) + " · coil pulse/release OK" if ok \
+                    else ", ".join(labels) + " · driver readback mismatch"
+                add(f"Relay {relay['id']} driver", ok, detail)
+
+            pump = status["pump"]
+            add("Pump contactor", pin_ok,
+                f"GPIO {pins['pump']} · state {pump['state']} · "
+                f"fault {'none' if not pump['fault'] else pump['fault']}")
+            add("Current sensor", 0 <= pump["current_a"] <= 30,
+                f"ACS712 reads {pump['current_a']:.2f} A · "
+                f"zero {status['sensors']['acs_zero_mv']:.0f} mV")
+            sensors = status["sensors"]
+            add("Tank float", True,
+                f"input {'active' if sensors['tank_full'] else 'idle'} · "
+                f"{'FULL' if sensors['tank_full'] else 'OK'}")
+            add("Sump float", True,
+                f"input {'active' if sensors['sump_dry'] else 'idle'} · "
+                f"{'DRY' if sensors['sump_dry'] else 'OK'}")
+
+            failed = sum(c["status"] == "fail" for c in checks)
+            warned = sum(c["status"] == "warn" for c in checks)
+            passed = len(checks) - failed - warned
+            verb = "PASS" if not failed else "FAIL"
+            return {
+                "ok": failed == 0,
+                "result": verb,
+                "summary": f"{verb} · {passed}/{len(checks)} checks passed"
+                           + (f", {warned} warning(s)" if warned else ""),
+                "passed": passed,
+                "warnings": warned,
+                "failed": failed,
+                "total": len(checks),
+                "finished": datetime.fromtimestamp(now, self.tz).strftime("%Y-%m-%d %H:%M:%S"),
+                "checks": checks,
+            }
+
     def config_api(self) -> dict:
         with self.lock:
             return public_config(self.cfg)
+
+    def set_profiles(self, profiles: Any) -> dict:
+        """Persist the profile library without sending it to the controller."""
+        out = self.set_config({"profiles": profiles})
+        return {"profiles": out["profiles"]}
 
     def events(self) -> list[dict]:
         with self.lock:
@@ -1285,6 +1506,14 @@ class SimApp:
             old_webrtc = dict(self.cfg.get("webrtc") or {})
             merged = merge_config(self.cfg, incoming)
             new_cfg = normalize_config(merged)
+            if self.config_path:
+                try:
+                    tmp = self.config_path.with_suffix(self.config_path.suffix + ".tmp")
+                    tmp.write_text(json.dumps(new_cfg, ensure_ascii=False, indent=2) + "\n",
+                                   encoding="utf-8")
+                    tmp.replace(self.config_path)
+                except OSError as exc:
+                    raise ConfigError(f"could not save config: {exc}") from exc
             self.cfg = new_cfg
             self.tz = parse_tz(new_cfg["device"]["timezone"])
             self.controller.tz = self.tz
@@ -1480,8 +1709,9 @@ class SimApp:
             now = self.clock.now()
             self._advance_locked(now)
             if target == "relay":
-                if not 1 <= relay_id <= MAX_CHANNELS:
-                    raise ConfigError("relay id must be 1..12")
+                limit = len(self.cfg["channels"])
+                if not 1 <= relay_id <= limit:
+                    raise ConfigError(f"relay id must be 1..{limit}")
                 self.controller.set_relay_mode(
                     relay_id - 1, mode, boost_min, now, pulse_ms
                 )
@@ -1686,6 +1916,8 @@ class SimHandler(BaseHTTPRequestHandler):
             self._send(200, app.snapshot())
         elif path == "/api/config":
             self._send(200, app.config_api())
+        elif path == "/api/profiles":
+            self._send(200, {"ok": True, "profiles": app.config_api()["profiles"]})
         elif path == "/api/events":
             self._send(200, {"events": app.events()})
         elif path == "/api/wireguard":
@@ -1710,6 +1942,11 @@ class SimHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/config":
                 self._send(200, {"ok": True, **app.set_config(body)})
+            elif path == "/api/profiles":
+                self._send(200, {"ok": True, **app.set_profiles(
+                    body.get("profiles", body.get("profile_library")))})
+            elif path == "/api/selftest":
+                self._send(200, app.self_test())
             elif path == "/api/chat":
                 self._send(200, app.chat(str(body.get("text") or body.get("message") or "")))
             elif path == "/api/wireguard":
@@ -1830,7 +2067,8 @@ def build_app(args: argparse.Namespace) -> SimApp:
         user, password = args.auth.split(":", 1)
         auth = (user, password)
     app = SimApp(cfg, speed=args.speed or 60.0, auth=auth,
-                 host=args.host, port=args.port, verbose=args.verbose)
+                 host=args.host, port=args.port, verbose=args.verbose,
+                 config_path=Path(args.config))
     if args.scenario:
         apply_scenario(app, args.scenario)
     if args.epoch:

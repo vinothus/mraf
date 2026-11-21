@@ -117,6 +117,24 @@ class ZephyrE2ETests(unittest.TestCase):
         self.assertIn("wifi", doc)
         self.assertEqual(len(doc["relays"]), 12)
 
+    def test_02a_selftest_requires_auth(self):
+        status, _, _ = request("/api/selftest", "POST", {}, auth=False)
+        self.assertEqual(status, 401)
+
+    def test_02b_selftest_reports_hardware_checks(self):
+        status, doc = request_json("/api/selftest", "POST", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(doc["ok"])
+        self.assertIn("checks", doc)
+        self.assertIn("summary", doc)
+        self.assertIn("finished", doc)
+        names = {check["name"] for check in doc["checks"]}
+        self.assertIn("ESP32 controller", names)
+        self.assertIn("GPIO driver map", names)
+        self.assertIn("Relay 1 driver", names)
+        self.assertIn("Pump contactor", names)
+        self.assertIn("Current sensor", names)
+
     def test_03_dashboard_served(self):
         status, payload, headers = request("/")
         self.assertEqual(status, 200)

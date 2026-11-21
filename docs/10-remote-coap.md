@@ -202,7 +202,7 @@ The controller sets a data flag. On the next poll it sends:
 }
 ```
 
-`relays` is in channel order 1-12. `1` means on.
+`relays` is in channel order 1-`relay_count` (1-12). `1` means on.
 
 ### Configuration request
 

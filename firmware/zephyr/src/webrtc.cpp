@@ -871,6 +871,10 @@ void mraf_webrtc_build_status(JsonObject out)
 
 void mraf_webrtc_start(void)
 {
+    if (!mraf_platform_webrtc_available()) {
+        copyWrt(g_status, sizeof(g_status), "unavailable");
+        return;
+    }
     k_thread_create(&g_webrtc_thread, g_webrtc_stack,
                     K_THREAD_STACK_SIZEOF(g_webrtc_stack), webrtcThread,
                     nullptr, nullptr, nullptr, K_PRIO_PREEMPT(8), 0, K_NO_WAIT);

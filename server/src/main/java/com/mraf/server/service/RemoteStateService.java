@@ -45,8 +45,8 @@ public class RemoteStateService {
     private static final int MAX_EVENTS = 40;
     private static final int MAX_ACKS = 20;
     private static final int MAX_CONSOLE = 200;
-    private static final Set<String> PROFILES =
-            Set.of("agri", "home", "godown", "industry");
+    private static final Pattern PROFILE_ID =
+            Pattern.compile("^[a-z][a-z0-9_-]{0,22}$");
     private static final Set<String> EQUIPMENT =
             Set.of("valve", "light", "motor", "fan", "pump", "socket", "heater",
                     "door", "other");
@@ -246,7 +246,7 @@ public class RemoteStateService {
             dev.firmware = request.path("fw").asText("");
         }
         String reportedProfile = request.path("profile").asText("");
-        if (created && PROFILES.contains(reportedProfile)) {
+        if (created && validProfileId(reportedProfile)) {
             dev.profile = reportedProfile;
         }
         dev.lastPollAt = Instant.now();
@@ -429,7 +429,7 @@ public class RemoteStateService {
         dev.rejected = false;
         if (body != null) {
             String profile = body.path("profile").asText("");
-            if (PROFILES.contains(profile)) {
+            if (validProfileId(profile)) {
                 dev.profile = profile;
             }
             if (body.has("poll_interval_sec")) {
@@ -455,7 +455,7 @@ public class RemoteStateService {
         Device dev = requireDevice(id);
         if (body != null) {
             String profile = body.path("profile").asText("");
-            if (PROFILES.contains(profile)) {
+            if (validProfileId(profile)) {
                 dev.profile = profile;
             }
             if (body.has("poll_interval_sec")) {
@@ -553,7 +553,7 @@ public class RemoteStateService {
         if (commands.isEmpty()) {
             throw new IllegalArgumentException("at least one command is required");
         }
-        commands.forEach(this::validateCommand);
+        commands.forEach(cmd -> validateCommand(dev, cmd));
 
         String rid = dev.id + "-ctl-" + (++dev.requestSeq);
         ObjectNode payload = mapper.createObjectNode();
@@ -591,7 +591,7 @@ public class RemoteStateService {
         return requestSummary(dev, "queued", r);
     }
 
-    private void validateCommand(JsonNode command) {
+    private void validateCommand(Device dev, JsonNode command) {
         if (!command.isObject()) {
             throw new IllegalArgumentException("each command must be an object");
         }
@@ -608,8 +608,9 @@ public class RemoteStateService {
         }
         if ("relay".equals(target)) {
             int id = command.path("id").asInt(0);
-            if (id < 1 || id > 12) {
-                throw new IllegalArgumentException("relay id must be 1..12");
+            int max = dev.config.activeRelayCount();
+            if (id < 1 || id > max) {
+                throw new IllegalArgumentException("relay id must be 1.." + max);
             }
         }
         if (command.has("boost_min")) {
@@ -651,6 +652,7 @@ public class RemoteStateService {
 
         ObjectNode payload = mapper.createObjectNode();
         payload.put("profile", normalized.profile);
+        payload.put("relay_count", normalized.activeRelayCount());
         payload.set("channels", mapper.valueToTree(normalized.channels));
         payload.set("recurring", mapper.valueToTree(normalized.recurring));
         payload.set("pump", mapper.valueToTree(normalized.pump));
@@ -682,11 +684,15 @@ public class RemoteStateService {
     // Validation
     // ---------------------------------------------------------------------
     private ControllerConfig validateConfig(ControllerConfig incoming) {
-        if (incoming == null || incoming.channels == null || incoming.channels.size() != 12) {
-            throw new IllegalArgumentException("exactly 12 channels are required");
+        if (incoming == null || incoming.channels == null) {
+            throw new IllegalArgumentException("channels are required");
         }
-        if (!PROFILES.contains(incoming.profile)) {
-            throw new IllegalArgumentException("profile must be agri/home/godown/industry");
+        int count = incoming.relayCount == null ? incoming.channels.size() : incoming.relayCount;
+        if (count < 1 || count > 12 || incoming.channels.size() != count) {
+            throw new IllegalArgumentException("relay_count must be 1..12 with that many channels");
+        }
+        if (!validProfileId(incoming.profile)) {
+            throw new IllegalArgumentException("profile must be a lowercase slug");
         }
         List<ChannelConfig> channels = new ArrayList<>(incoming.channels);
         channels.sort(Comparator.comparingInt(c -> c.id));
@@ -694,7 +700,7 @@ public class RemoteStateService {
         for (int i = 0; i < channels.size(); i++) {
             ChannelConfig c = channels.get(i);
             if (c.id != i + 1 || !ids.add(c.id)) {
-                throw new IllegalArgumentException("channel ids must be 1..12 in order");
+                throw new IllegalArgumentException("channel ids must be 1.." + count + " in order");
             }
             checkName(c.name, "channel " + c.id);
             if (c.zone != null && c.zone.length() > 23) {
@@ -766,8 +772,9 @@ public class RemoteStateService {
             if (rs.month < 1 || rs.month > 12) {
                 throw new IllegalArgumentException(label + ": month must be 1..12");
             }
-            if (rs.channelMask < 0 || rs.channelMask > 0x0FFF) {
-                throw new IllegalArgumentException(label + ": channel_mask must be 0..4095");
+            int maxMask = (1 << count) - 1;
+            if (rs.channelMask < 0 || rs.channelMask > maxMask) {
+                throw new IllegalArgumentException(label + ": channel_mask must be 0.." + maxMask);
             }
             if (rs.from == null || rs.to == null
                     || !TIME.matcher(rs.from).matches() || !TIME.matcher(rs.to).matches()) {
@@ -775,13 +782,14 @@ public class RemoteStateService {
             }
             if (rs.channels != null) {
                 for (Integer c : rs.channels) {
-                    if (c == null || c < 1 || c > 12) {
-                        throw new IllegalArgumentException(label + ": channel id must be 1..12");
+                    if (c == null || c < 1 || c > count) {
+                        throw new IllegalArgumentException(label + ": channel id must be 1.." + count);
                     }
                     rs.channelMask |= 1 << (c - 1);
                 }
             }
         }
+        incoming.relayCount = count;
         incoming.channels = channels;
         incoming.recurring = recurring;
         return incoming;
@@ -811,8 +819,12 @@ public class RemoteStateService {
         }
     }
 
+    private static boolean validProfileId(String profile) {
+        return profile != null && PROFILE_ID.matcher(profile).matches();
+    }
+
     private String validProfile(String profile) {
-        return PROFILES.contains(profile) ? profile : "agri";
+        return validProfileId(profile) ? profile : "agri";
     }
 
     private int clampInterval(int seconds) {
@@ -843,6 +855,10 @@ public class RemoteStateService {
         out.put("confirmedCount", confirmed);
         out.put("onlineCount", online);
         return out;
+    }
+
+    public synchronized int activeRelayCount(String id) {
+        return requireDevice(id).config.activeRelayCount();
     }
 
     public synchronized ObjectNode snapshot(String id) {

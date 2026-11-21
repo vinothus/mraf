@@ -172,6 +172,11 @@ authenticates.
 | `POST` | `/api/wireguard/apply` | admin | Apply the interface to the kernel (when enabled) |
 | `GET` | `/api/state` | any | Backwards-compatible alias for the fleet or own device |
 
+`POST /api/devices/{id}/config` accepts the same `relay_count` as the
+firmware/simulator: 1-12, with exactly that many `channels`. The server dashboard
+shows only those relays, and its Profiles & schedules tab can add or delete
+relay records; relay controls above `relay_count` are rejected.
+
 Example control with a momentary pulse:
 
 ```bash
@@ -224,7 +229,7 @@ curl -u admin:mraf-demo http://localhost:8080/api/devices/SIM-000001/console
 The same capability is exposed to MCP clients as the `console_command` and
 `console_output` tools. Typical commands are `help`, `kernel version`,
 `device list`, `net iface`, `uptime`, `threads`, `mraf status`,
-`mraf relay <1-12> <on|off|auto>`, `mraf pump <on|off|auto>` and `mraf wg`.
+`mraf relay <1-relay_count> <on|off|auto>`, `mraf pump <on|off|auto>` and `mraf wg`.
 Relay and pump commands from the console go through the same safety rules as the
 dashboard.
 

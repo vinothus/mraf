@@ -102,16 +102,16 @@ void help(Buf &b)
 void mrafStatus(Buf &b)
 {
     int on = 0;
-    for (int i = 0; i < MAX_CHANNELS; i++) {
+    for (int i = 0; i < g_ctrl.channelCount(); i++) {
         if (g_ctrl.relay(i).on) {
             on++;
         }
     }
     putf(b, "device_id : %s\n", g_cfg.device_id);
     putf(b, "name      : %s\n", g_cfg.device_name);
-    putf(b, "profile   : %s\n", profileName(g_cfg.profile));
+    putf(b, "profile   : %s\n", g_cfg.profile_id);
     putf(b, "confirmed : %s\n", mraf_remote_confirmed() ? "true" : "false");
-    putf(b, "relays    : %d/12 on\n", on);
+    putf(b, "relays    : %d/%d on\n", on, g_ctrl.channelCount());
     putf(b, "pump      : %s (mode %s)\n", g_ctrl.pump().on ? "RUNNING" : "OFF",
          modeName(g_ctrl.config().pump.mode));
 }
@@ -123,7 +123,7 @@ void mrafRelay(Buf &b, int argc, char *argv[])
         return;
     }
     int idx = atoi(argv[2]);
-    if (idx < 1 || idx > MAX_CHANNELS) {
+    if (idx < 1 || idx > g_ctrl.channelCount()) {
         put(b, "invalid relay index");
         return;
     }

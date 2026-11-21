@@ -160,7 +160,7 @@
       <div class="stats">
         <div class="card stat"><div class="k">Battery</div><div class="v" id="stat-battery">--</div><div class="s">LiFePO4 controller rail</div></div>
         <div class="card stat"><div class="k">Mains</div><div class="v" id="stat-power">--</div><div class="s" id="stat-power-sub">controller-only backup</div></div>
-        <div class="card stat"><div class="k">Active outputs</div><div class="v" id="stat-active">--</div><div class="s">of 12 relays</div></div>
+        <div class="card stat"><div class="k">Active outputs</div><div class="v" id="stat-active">--</div><div class="s" id="stat-active-sub">of 12 relays</div></div>
         <div class="card stat"><div class="k">CoAP queue</div><div class="v" id="stat-queue">--</div><div class="s" id="stat-queue-sub">no pending request</div></div>
       </div>
 
@@ -223,6 +223,10 @@
         <label>Poll interval (sec)</label>
         <input id="interval-input" type="number" min="10" max="3600" step="10">
         <span class="hint">Server-varied schedule; the ESP32 adopts this on its next poll.</span>
+      </div>
+      <div class="toolbar">
+        <div><h2 id="relay-count-label">Relay records · 12</h2><p class="hint">Each dashboard relay card comes from one record here. New records start as disabled spares.</p></div>
+        <button id="relay-add" class="btn accent" type="button">+ Add relay</button>
       </div>
       <div id="schedules" class="sched-list"></div>
       <div class="toolbar"><h2>Pump schedule &amp; protection</h2></div>

@@ -494,6 +494,12 @@ function renderHeader() {
   $("#dev-delete").hidden = !admin;
 }
 
+function activeCount(cfg) {
+  cfg = cfg || {};
+  const n = Number(cfg.relay_count);
+  return Number.isInteger(n) && n >= 1 && n <= 12 ? n : Math.min(12, (cfg.channels || []).length);
+}
+
 function renderDashboard() {
   const s = snap;
   const d = s.lastData;
@@ -503,6 +509,7 @@ function renderDashboard() {
 
   const relayStates = d && Array.isArray(d.relays) ? d.relays : [];
   $("#stat-active").textContent = d ? String(relayStates.filter(v => Number(v) === 1).length) : "--";
+  $("#stat-active-sub").textContent = `of ${activeCount(s.config)} relays`;
 
   const q = s.request || {};
   $("#stat-queue").textContent = String(q.inflight ? 1 : (q.queued || 0));
@@ -566,6 +573,7 @@ function renderEditors() {
 }
 
 function renderSchedules() {
+  $("#relay-count-label").textContent = `Relay records · ${activeCount(draft)}`;
   $("#schedules").innerHTML = (draft.channels || []).map(ch => `
     <div class="card sched-row" data-channel="${ch.id}">
       <div class="sched-head">
@@ -583,6 +591,7 @@ function renderSchedules() {
         <label class="check"><input class="pulse" type="checkbox" ${ch.pulse_mode ? "checked" : ""}> Momentary pulse</label>
         <label class="check">on <input class="pon" type="number" min="20" max="10000" step="10" value="${ch.pulse_on_ms ?? 600}"> ms</label>
         <label class="check">off <input class="poff" type="number" min="20" max="10000" step="10" value="${ch.pulse_off_ms ?? 600}"> ms</label>
+        <button class="btn small danger" data-remrelay type="button">Delete relay</button>
       </div>
     </div>`).join("");
 
@@ -609,7 +618,7 @@ function renderSchedules() {
 
 function recRow(rs) {
   const mask = rs.channel_mask || 0;
-  const channels = Array.from({length: 12}, (_, i) => i + 1)
+  const channels = Array.from({length: activeCount(draft)}, (_, i) => i + 1)
     .map(n => `<label><input type="checkbox" class="rch" value="${n}" ${mask & (1 << (n - 1)) ? "checked" : ""}> R${n}</label>`)
     .join("");
   return `<div class="card rec-row" data-rec>
@@ -652,6 +661,36 @@ function collectChannels() {
   }));
 }
 
+function addRelayRecord() {
+  const channels = collectChannels();
+  if (channels.length >= 12) return showToast("Maximum 12 relays", true);
+  const id = channels.length + 1;
+  channels.push({
+    id, name: `Spare ${id}`, zone: `Zone ${id}`, equipment: "other",
+    pulse_mode: false, pulse_on_ms: 600, pulse_off_ms: 600,
+    enabled: false, days: 0, mode: "auto", windows: []
+  });
+  draft.channels = channels;
+  draft.relay_count = channels.length;
+  renderSchedules();
+  renderRecurring();
+  draftDirty = true;
+  showToast(`Relay ${id} added`);
+}
+
+function deleteRelayRecord(id) {
+  const channels = collectChannels().filter(ch => ch.id !== id);
+  if (channels.length === collectChannels().length) return;
+  if (!channels.length) return showToast("At least one relay is required", true);
+  channels.forEach((ch, i) => { ch.id = i + 1; });
+  draft.channels = channels;
+  draft.relay_count = channels.length;
+  renderSchedules();
+  renderRecurring();
+  draftDirty = true;
+  showToast(`Relay ${id} deleted`);
+}
+
 function collectPump() {
   const prow = $("#pump-schedule");
   return {
@@ -687,9 +726,11 @@ function collectRecurring() {
 
 async function saveConfig() {
   try {
+    const channels = collectChannels();
     const body = {
       profile: $("#profile-select").value,
-      channels: collectChannels(),
+      relay_count: channels.length,
+      channels,
       recurring: collectRecurring(),
       pump: collectPump()
     };
@@ -930,6 +971,13 @@ document.addEventListener("click", async ev => {
   if (t.closest("#clear-queue")) {
     try { await api(`/api/devices/${encodeURIComponent(deviceId)}/queue`, {method: "DELETE"}); showToast("Queue cleared"); await loadDevice(false); }
     catch (e) { showToast(e.message, true); }
+    return;
+  }
+  if (t.closest("#relay-add")) { addRelayRecord(); return; }
+  const remRelay = t.closest("[data-remrelay]");
+  if (remRelay) {
+    const id = Number(remRelay.closest("[data-channel]").dataset.channel);
+    deleteRelayRecord(id);
     return;
   }
   if (t.closest("#save-config") || t.closest("#save-config-rec")) { await saveConfig(); return; }

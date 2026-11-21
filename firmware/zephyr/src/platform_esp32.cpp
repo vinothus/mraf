@@ -72,9 +72,29 @@ static struct k_thread g_time_thread;
 
 static volatile bool g_sta_connected;
 static volatile bool g_ap_enabled;
+static bool g_ap_started;
+static bool g_sta_configured;
+static bool g_sta_connect_pending;
+static int64_t g_sta_fallback_deadline_ms;
+static int64_t g_sta_retry_deadline_ms;
+static int64_t g_sta_connect_deadline_ms;
+static enum wifi_iface_state g_sta_radio_state = WIFI_STATE_INACTIVE;
+static const int64_t STA_FALLBACK_TIMEOUT_MS = 120000;
+static const int64_t STA_RETRY_INTERVAL_MS = 30000;
+static const int64_t CONNECT_ATTEMPT_TIMEOUT_MS = 30000;
+
+static void schedule_sta_retry(int64_t delay_ms)
+{
+    int64_t deadline = k_uptime_get() + delay_ms;
+    if (g_sta_retry_deadline_ms == 0 || deadline < g_sta_retry_deadline_ms) {
+        g_sta_retry_deadline_ms = deadline;
+    }
+}
 static char g_sta_ip[NET_IPV4_ADDR_LEN] = "0.0.0.0";
 static char g_ap_ip[NET_IPV4_ADDR_LEN] = "192.168.4.1";
 static char g_sta_ssid[33] = "";
+static char g_sta_pass[65] = "";
+static char g_ap_ssid[33] = "MRAF";
 static int g_rssi;
 static bool g_time_synced;
 
@@ -361,7 +381,10 @@ float mraf_platform_read_current_a(bool pump_commanded_on)
 
 void mraf_storage_init(void)
 {
-    (void)settings_subsys_init();
+    int err = settings_subsys_init();
+    if (err) {
+        printk("settings: subsystem init failed (%d)\n", err);
+    }
 }
 
 bool mraf_storage_load(char *buf, size_t cap)
@@ -387,6 +410,59 @@ bool mraf_storage_save(const char *json)
 
 // --- Wi-Fi / network ------------------------------------------------------
 
+// Poll the radio directly. Several Wi-Fi notifications (softAP start, scan
+// done) have been observed to never reach the net_mgmt event callback even
+// though the radio itself is running, so the event handler is only a fast
+// path: once a second we ask the driver for the real state and reconcile.
+static void poll_radio_state(void)
+{
+    static int64_t last_poll;
+    int64_t now = k_uptime_get();
+    if (now - last_poll < 1000) {
+        return;
+    }
+    last_poll = now;
+
+    struct wifi_iface_status st = {};
+
+    if (sta_iface && net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, sta_iface,
+                              &st, sizeof(st)) == 0) {
+        g_sta_radio_state = (enum wifi_iface_state)st.state;
+        bool up = st.state == WIFI_STATE_COMPLETED;
+        if (up && !g_sta_connected) {
+            // Covers driver-side auto-reconnects whose connect event was
+            // never delivered, and the first association in general.
+            printk("Wi-Fi: associated with \"%s\" (state %s)\n",
+                   g_sta_ssid, wifi_state_txt((enum wifi_iface_state)st.state));
+            net_dhcpv4_start(sta_iface);
+        } else if (!up && g_sta_connected) {
+            printk("Wi-Fi: link down (state %s)\n",
+                   wifi_state_txt((enum wifi_iface_state)st.state));
+        }
+        g_sta_connected = up;
+        if (up) {
+            g_sta_fallback_deadline_ms = 0;
+            g_rssi = st.rssi;
+            if (st.ssid_len > 0 && st.ssid_len < sizeof(g_sta_ssid)) {
+                memcpy(g_sta_ssid, st.ssid, st.ssid_len);
+                g_sta_ssid[st.ssid_len] = '\0';
+            }
+        }
+    }
+
+    if (ap_iface && !g_ap_enabled) {
+        struct wifi_iface_status ap = {};
+        if (net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, ap_iface,
+                     &ap, sizeof(ap)) == 0 &&
+            ap.state != WIFI_STATE_INACTIVE &&
+            ap.state != WIFI_STATE_INTERFACE_DISABLED) {
+            g_ap_enabled = true;
+            printk("Wi-Fi AP: \"%s\" active on channel %u, open http://192.168.4.1/\n",
+                   g_ap_ssid, ap.channel);
+        }
+    }
+}
+
 static void update_net_info(void)
 {
     struct net_if *iface = g_sta_connected ? sta_iface : ap_iface;
@@ -402,9 +478,34 @@ static void update_net_info(void)
     if (g_sta_connected && sta_iface) {
         struct wifi_iface_status status = {};
         if (net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, sta_iface, &status,
-                     sizeof(status)) == 0) {
+                      sizeof(status)) == 0) {
             g_rssi = status.rssi;
+            // The driver can reconnect on its own, so trust the radio for the
+            // SSID we are actually associated with.
+            if (status.ssid_len > 0 &&
+                status.ssid_len < sizeof(g_sta_ssid)) {
+                memcpy(g_sta_ssid, status.ssid, status.ssid_len);
+                g_sta_ssid[status.ssid_len] = '\0';
+            }
         }
+    }
+}
+
+// Console feedback when the device joins an outside Wi-Fi network.
+static void print_sta_ip(void)
+{
+    static char prev[NET_IPV4_ADDR_LEN] = "";
+
+    if (!g_sta_connected) {
+        return;
+    }
+    update_net_info();
+    if (g_sta_ip[0] != '\0' && strcmp(g_sta_ip, prev) != 0 &&
+        strcmp(g_sta_ip, "0.0.0.0") != 0) {
+        printk("Wi-Fi: connected to \"%s\", IP address %s\n",
+               g_sta_ssid, g_sta_ip);
+        strncpy(prev, g_sta_ip, sizeof(prev) - 1);
+        prev[sizeof(prev) - 1] = '\0';
     }
 }
 
@@ -413,23 +514,72 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb,
                                uint64_t event, struct net_if *iface)
 {
     ARG_UNUSED(iface);
+    if (event != NET_EVENT_WIFI_SCAN_RESULT) {
+        printk("Wi-Fi net event: 0x%llx\n", (unsigned long long)event);
+    }
     switch (event) {
     case NET_EVENT_WIFI_CONNECT_RESULT: {
         const struct wifi_status *st = (const struct wifi_status *)cb->info;
-        g_sta_connected = st ? st->status == 0 : true;
-        if (g_sta_connected && sta_iface) {
+        bool ok = st ? st->status == 0 : true;
+        g_sta_connect_pending = false;
+        g_sta_connect_deadline_ms = 0;
+        g_sta_connected = ok;
+        if (ok && sta_iface) {
+            g_sta_fallback_deadline_ms = 0;
+            g_sta_retry_deadline_ms = 0;
             net_dhcpv4_start(sta_iface);
+            printk("Wi-Fi: associated with \"%s\", waiting for IP...\n",
+                   g_sta_ssid);
+        } else if (!ok) {
+            printk("Wi-Fi: connect to \"%s\" failed (status %d: %s)\n",
+                   g_sta_ssid, st ? st->status : -1,
+                   st ? wifi_conn_status_txt((enum wifi_conn_status)st->status)
+                      : "no detail");
+            if (g_sta_configured) {
+                // Keep the original STA-only fallback window; don't start AP
+                // immediately on the first failure.
+                if (!g_ap_started && g_sta_fallback_deadline_ms == 0) {
+                    g_sta_fallback_deadline_ms =
+                        k_uptime_get() + STA_FALLBACK_TIMEOUT_MS;
+                }
+                schedule_sta_retry(STA_RETRY_INTERVAL_MS);
+            }
         }
         break;
     }
-    case NET_EVENT_WIFI_DISCONNECT_RESULT:
+    case NET_EVENT_WIFI_DISCONNECT_RESULT: {
+        const struct wifi_status *st = (const struct wifi_status *)cb->info;
+        if (g_sta_connected) {
+            printk("Wi-Fi: disconnected from \"%s\"\n", g_sta_ssid);
+        } else if (g_sta_configured) {
+            printk("Wi-Fi: disconnect event for \"%s\"\n", g_sta_ssid);
+        }
+        if (st) {
+            printk("Wi-Fi: disconnect detail status=%d (%s)\n", st->status,
+                   wifi_disconn_reason_txt((enum wifi_disconn_reason)st->status));
+        }
         g_sta_connected = false;
+        g_sta_connect_pending = false;
+        g_sta_connect_deadline_ms = 0;
+        if (g_sta_configured) {
+            if (!g_ap_started && g_sta_fallback_deadline_ms == 0) {
+                g_sta_fallback_deadline_ms =
+                    k_uptime_get() + STA_FALLBACK_TIMEOUT_MS;
+            }
+            schedule_sta_retry(STA_RETRY_INTERVAL_MS);
+        }
         break;
+    }
     case NET_EVENT_WIFI_AP_ENABLE_RESULT:
+        if (!g_ap_enabled) {
+            printk("Wi-Fi AP: \"%s\" active, open http://192.168.4.1/\n", g_ap_ssid);
+        }
         g_ap_enabled = true;
+        g_ap_started = true;
         break;
     case NET_EVENT_WIFI_AP_DISABLE_RESULT:
         g_ap_enabled = false;
+        g_ap_started = false;
         break;
     case NET_EVENT_WIFI_SCAN_RESULT: {
         const struct wifi_scan_result *res =
@@ -446,10 +596,14 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb,
         if (iface == sta_iface) {
             g_sta_connected = true;
             k_sem_give(&g_ip_sem);
+            print_sta_ip();
         }
         break;
     case NET_EVENT_IPV4_ADDR_DEL:
         if (iface == sta_iface) {
+            if (g_sta_connected) {
+                printk("Wi-Fi: lost IP address, reconnecting\n");
+            }
             g_sta_connected = false;
         }
         break;
@@ -459,26 +613,44 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb,
     update_net_info();
 }
 
-static void start_ap(const Config &cfg)
+static void start_ap(const char *device_id, const char *auth_pass)
 {
+    if (g_ap_started) {
+        return;
+    }
     if (!ap_iface) {
+        printk("Wi-Fi AP: softAP interface missing - AP not started\n");
         return;
     }
     char ssid[33];
-    const char *src = cfg.device_id[0] ? cfg.device_id : "MRAF";
+    const char *src = (device_id && device_id[0]) ? device_id : "MRAF";
     snprintf(ssid, sizeof(ssid), "%.28s", src);
-    const char *psk = cfg.auth_pass[0] ? cfg.auth_pass : DEFAULT_AUTH_PASS;
+    snprintf(g_ap_ssid, sizeof(g_ap_ssid), "%s", ssid);
+    const char *psk = (auth_pass && auth_pass[0]) ? auth_pass : DEFAULT_AUTH_PASS;
+    size_t psk_len = strlen(psk);
+    if (psk_len < 8 || psk_len > 63) {
+        printk("Wi-Fi AP: auth password length %u invalid for WPA2, using default\n",
+               (unsigned)psk_len);
+        psk = DEFAULT_AUTH_PASS;
+        psk_len = strlen(psk);
+    }
 
     struct wifi_connect_req_params ap = {};
     ap.ssid = (const uint8_t *)ssid;
     ap.ssid_length = (uint8_t)strlen(ssid);
     ap.psk = (const uint8_t *)psk;
-    ap.psk_length = (uint8_t)strlen(psk);
+    ap.psk_length = (uint8_t)psk_len;
     ap.security = WIFI_SECURITY_TYPE_PSK;
     ap.channel = WIFI_CHANNEL_ANY;
     ap.band = WIFI_FREQ_BAND_2_4_GHZ;
     ap.timeout = 20;
-    (void)net_mgmt(NET_REQUEST_WIFI_AP_ENABLE, ap_iface, &ap, sizeof(ap));
+    int ap_ret = net_mgmt(NET_REQUEST_WIFI_AP_ENABLE, ap_iface, &ap, sizeof(ap));
+    if (ap_ret != 0) {
+        printk("Wi-Fi AP: enable failed (%d) - AP not started\n", ap_ret);
+        return;
+    }
+    g_ap_started = true;
+    printk("Wi-Fi AP: \"%s\" starting at 192.168.4.1\n", ssid);
 
     struct net_in_addr ap_addr;
     struct net_in_addr netmask;
@@ -492,18 +664,139 @@ static void start_ap(const Config &cfg)
     net_dhcpv4_server_start(ap_iface, &pool);
 }
 
-static void start_sta(const Config &cfg)
+static void start_ap_fallback(void)
 {
-    if (!sta_iface || cfg.wifi_ssid[0] == '\0') {
+    if (g_ap_started || !g_sta_configured) {
         return;
     }
-    snprintf(g_sta_ssid, sizeof(g_sta_ssid), "%s", cfg.wifi_ssid);
+    char dev_id[24] = "MRAF";
+    char auth_pass[32];
+    snprintf(auth_pass, sizeof(auth_pass), "%s", DEFAULT_AUTH_PASS);
+    k_mutex_lock(&g_state_lock, K_FOREVER);
+    if (g_cfg.device_id[0]) {
+        snprintf(dev_id, sizeof(dev_id), "%s", g_cfg.device_id);
+    }
+    if (g_cfg.auth_pass[0]) {
+        snprintf(auth_pass, sizeof(auth_pass), "%s", g_cfg.auth_pass);
+    }
+    k_mutex_unlock(&g_state_lock);
+    printk("Wi-Fi: STA not connected, starting AP+STA fallback\n");
+    start_ap(dev_id, auth_pass);
+    schedule_sta_retry(STA_RETRY_INTERVAL_MS);
+}
+
+static void apply_wifi_regulatory_domain(void)
+{
+    if (!sta_iface) {
+        return;
+    }
+    const char *code = CONFIG_MRAF_WIFI_COUNTRY;
+    if (!code || strlen(code) < 2) {
+        code = "IN";
+    }
+    bool was_up = net_if_is_admin_up(sta_iface);
+
+    struct wifi_reg_domain reg = {};
+    reg.oper = WIFI_MGMT_SET;
+    /* force disables 802.11d so channels 12/13 are actively scanned instead
+     * of only passively heard while the radio is idle.
+     */
+    reg.force = true;
+    reg.country_code[0] = (uint8_t)code[0];
+    reg.country_code[1] = (uint8_t)code[1];
+    int ret = net_mgmt(NET_REQUEST_WIFI_REG_DOMAIN, sta_iface, &reg, sizeof(reg));
+    printk("Wi-Fi: regulatory domain %c%c %s (err %d)\n", code[0], code[1],
+           ret == 0 ? "set" : "not set", ret);
+
+    /* Set the country before enabling the interface so the first scan uses
+     * the expanded channel list, not the world-safe 1-11 default.
+     */
+    if (!was_up) {
+        int up_ret = net_if_up(sta_iface);
+        if (up_ret != 0) {
+            printk("Wi-Fi: STA interface up failed (err %d)\n", up_ret);
+        }
+    }
+}
+
+#if defined(CONFIG_MRAF_WIFI_BOOT_SCAN)
+static void log_startup_scan(void)
+{
+    if (!sta_iface || g_sta_ssid[0] == '\0') {
+        return;
+    }
+
+    printk("Wi-Fi scan: scanning 2.4 GHz for \"%s\"...\n", g_sta_ssid);
+    g_scan_count = 0;
+    k_sem_reset(&g_scan_done);
+    int ret = net_mgmt(NET_REQUEST_WIFI_SCAN, sta_iface, NULL, 0);
+    if (ret != 0 && ret != -EINPROGRESS && ret != -EBUSY) {
+        printk("Wi-Fi scan: request failed (err %d)\n", ret);
+        return;
+    }
+
+    int wait = k_sem_take(&g_scan_done, K_SECONDS(8));
+    size_t n = g_scan_count < ARRAY_SIZE(g_scan) ? g_scan_count : ARRAY_SIZE(g_scan);
+    size_t hidden = 0;
+    bool found = false;
+    size_t target_len = strlen(g_sta_ssid);
+
+    for (size_t i = 0; i < n; i++) {
+        const struct wifi_scan_result *res = &g_scan[i];
+        if (res->ssid_length == 0) {
+            hidden++;
+            continue;
+        }
+        char name[WIFI_SSID_MAX_LEN + 1];
+        size_t len = res->ssid_length;
+        if (len > WIFI_SSID_MAX_LEN) {
+            len = WIFI_SSID_MAX_LEN;
+        }
+        memcpy(name, res->ssid, len);
+        name[len] = '\0';
+        printk("Wi-Fi scan: \"%s\" ch=%u rssi=%d %s\n", name, res->channel,
+               res->rssi,
+               res->security == WIFI_SECURITY_TYPE_NONE ? "open" : "secure");
+        if (res->ssid_length == target_len &&
+            memcmp(res->ssid, g_sta_ssid, target_len) == 0) {
+            found = true;
+        }
+    }
+
+    printk("Wi-Fi scan: %u result(s), %u hidden%s\n", (unsigned)n,
+           (unsigned)hidden, wait == 0 ? "" : " (timed out)");
+    if (found) {
+        printk("Wi-Fi scan: target \"%s\" is visible on 2.4 GHz\n", g_sta_ssid);
+    } else {
+        printk("Wi-Fi scan: target \"%s\" NOT visible on 2.4 GHz "
+               "(check 5 GHz-only, 2.4 GHz disabled, hidden SSID or spelling)\n",
+               g_sta_ssid);
+    }
+}
+#endif /* CONFIG_MRAF_WIFI_BOOT_SCAN */
+
+static const char *wifi_connect_req_str(int ret)
+{
+    if (ret == 0) {
+        return "in progress";
+    }
+    if (ret == -EALREADY) {
+        return "already connecting";
+    }
+    if (ret == -EBUSY) {
+        return "busy";
+    }
+    return "request failed";
+}
+
+static int sta_send_connect(void)
+{
     struct wifi_connect_req_params sta = {};
-    sta.ssid = (const uint8_t *)cfg.wifi_ssid;
-    sta.ssid_length = (uint8_t)strlen(cfg.wifi_ssid);
-    if (cfg.wifi_pass[0]) {
-        sta.psk = (const uint8_t *)cfg.wifi_pass;
-        sta.psk_length = (uint8_t)strlen(cfg.wifi_pass);
+    sta.ssid = (const uint8_t *)g_sta_ssid;
+    sta.ssid_length = (uint8_t)strlen(g_sta_ssid);
+    if (g_sta_pass[0]) {
+        sta.psk = (const uint8_t *)g_sta_pass;
+        sta.psk_length = (uint8_t)strlen(g_sta_pass);
         sta.security = WIFI_SECURITY_TYPE_PSK;
     } else {
         sta.security = WIFI_SECURITY_TYPE_NONE;
@@ -511,18 +804,76 @@ static void start_sta(const Config &cfg)
     sta.channel = WIFI_CHANNEL_ANY;
     sta.band = WIFI_FREQ_BAND_2_4_GHZ;
     sta.timeout = 20;
-    (void)net_mgmt(NET_REQUEST_WIFI_CONNECT, sta_iface, &sta, sizeof(sta));
+    int sta_ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, sta_iface, &sta, sizeof(sta));
+    if (sta_ret == 0 || sta_ret == -EALREADY || sta_ret == -EINPROGRESS) {
+        g_sta_connect_pending = true;
+        g_sta_connect_deadline_ms = k_uptime_get() + CONNECT_ATTEMPT_TIMEOUT_MS;
+    }
+    return sta_ret;
+}
+
+static void start_sta(const Config &cfg)
+{
+    if (!sta_iface) {
+        printk("Wi-Fi STA: station interface missing\n");
+        return;
+    }
+    if (cfg.wifi_ssid[0] == '\0') {
+        printk("Wi-Fi STA: no network configured, staying in AP mode\n");
+        return;
+    }
+    snprintf(g_sta_ssid, sizeof(g_sta_ssid), "%s", cfg.wifi_ssid);
+    snprintf(g_sta_pass, sizeof(g_sta_pass), "%s", cfg.wifi_pass);
+#if defined(CONFIG_MRAF_WIFI_BOOT_SCAN)
+    log_startup_scan();
+#endif
+    int sta_ret = sta_send_connect();
+    printk("Wi-Fi STA: connecting to \"%s\" (%s, err %d)\n", g_sta_ssid,
+           wifi_connect_req_str(sta_ret), sta_ret);
+}
+
+static void retry_sta_connect(void)
+{
+    if (!g_sta_configured || g_sta_connected || !sta_iface || g_sta_connect_pending) {
+        return;
+    }
+    int sta_ret = sta_send_connect();
+    printk("Wi-Fi STA: retry connect to \"%s\" (%s, err %d)\n", g_sta_ssid,
+           wifi_connect_req_str(sta_ret), sta_ret);
+    if (sta_ret == -EALREADY) {
+        (void)net_mgmt(NET_REQUEST_WIFI_DISCONNECT, sta_iface, NULL, 0);
+        g_sta_connect_pending = false;
+        g_sta_connect_deadline_ms = 0;
+        schedule_sta_retry(5000);
+    } else if (sta_ret == -EBUSY) {
+        schedule_sta_retry(10000);
+    } else {
+        schedule_sta_retry(STA_RETRY_INTERVAL_MS);
+    }
 }
 #endif /* CONFIG_WIFI_ESP32 */
 
 void mraf_platform_init(void)
 {
+#if !defined(CONFIG_ARCH_POSIX)
+    printk("Reset reason: %d\n", (int)esp_reset_reason());
+#endif
     mraf_set_timezone(DEFAULT_TIMEZONE);
     k_sem_init(&g_ip_sem, 0, 1);
     k_sem_init(&g_scan_done, 0, 1);
 
     if (device_is_ready(gpio0)) {
-        gpio_pin_configure(gpio0, MRAF_STATUS_LED_PIN, GPIO_OUTPUT_INACTIVE);
+        int led_ret = gpio_pin_configure(gpio0, MRAF_STATUS_LED_PIN,
+                                         GPIO_OUTPUT_INACTIVE);
+        if (led_ret != 0) {
+            printk("status LED: GPIO%d configure failed (%d), no blink\n",
+                   MRAF_STATUS_LED_PIN, led_ret);
+        } else {
+            printk("status LED: GPIO%d ready (AP mode = fast blink, "
+                   "Wi-Fi = slow blink)\n", MRAF_STATUS_LED_PIN);
+        }
+    } else {
+        printk("status LED: gpio0 device not ready, no blink\n");
     }
     // Relay board is active-low: drive all outputs high (off) at boot.
     for (int i = 0; i < MAX_CHANNELS; i++) {
@@ -575,8 +926,26 @@ void mraf_platform_start_network(const Config &cfg)
                      strlen(cfg.device_id[0] ? cfg.device_id : "mraf"));
 
 #if defined(CONFIG_WIFI_ESP32)
-    start_ap(cfg);
-    start_sta(cfg);
+    g_sta_configured = cfg.wifi_ssid[0] != '\0';
+    g_ap_started = false;
+    g_sta_fallback_deadline_ms = 0;
+    g_sta_retry_deadline_ms = 0;
+    g_sta_ssid[0] = '\0';
+    g_sta_pass[0] = '\0';
+    g_sta_connect_pending = false;
+    g_sta_connect_deadline_ms = 0;
+    g_sta_radio_state = WIFI_STATE_INACTIVE;
+
+    apply_wifi_regulatory_domain();
+    if (g_sta_configured) {
+        start_sta(cfg);
+        g_sta_fallback_deadline_ms = k_uptime_get() + STA_FALLBACK_TIMEOUT_MS;
+        printk("Wi-Fi: trying STA \"%s\" first, AP+STA fallback in %d ms if not connected\n",
+               cfg.wifi_ssid, (int)STA_FALLBACK_TIMEOUT_MS);
+    } else {
+        printk("Wi-Fi: no STA SSID configured, starting AP for provisioning\n");
+        start_ap(cfg.device_id, cfg.auth_pass);
+    }
 #endif
 
     k_thread_create(&g_time_thread, g_time_stack,
@@ -587,7 +956,47 @@ void mraf_platform_start_network(const Config &cfg)
 
 void mraf_platform_poll_network(void)
 {
+    poll_radio_state();
+    int64_t now = k_uptime_get();
+    if (g_sta_configured && !g_sta_connected && !g_ap_started &&
+        g_sta_fallback_deadline_ms > 0 &&
+        now >= g_sta_fallback_deadline_ms) {
+        start_ap_fallback();
+        g_sta_fallback_deadline_ms = 0;
+    }
+    if (g_sta_configured && !g_sta_connected && sta_iface &&
+        g_sta_connect_pending && g_sta_connect_deadline_ms > 0 &&
+        now >= g_sta_connect_deadline_ms) {
+        printk("Wi-Fi: connect attempt timed out (state %s), forcing disconnect\n",
+               wifi_state_txt(g_sta_radio_state));
+        g_sta_connect_pending = false;
+        g_sta_connect_deadline_ms = 0;
+        (void)net_mgmt(NET_REQUEST_WIFI_DISCONNECT, sta_iface, NULL, 0);
+        schedule_sta_retry(5000);
+    }
+    if (g_sta_configured && !g_sta_connected && !g_sta_connect_pending &&
+        g_sta_retry_deadline_ms > 0 &&
+        now >= g_sta_retry_deadline_ms) {
+        retry_sta_connect();
+    }
     update_net_info();
+    print_sta_ip();
+
+    // Serial heartbeat while the network is not usable yet, so a stalled
+    // radio bring-up is visible on the console instead of dead silence.
+    static int64_t last_net_log;
+    if (now - last_net_log > 15000) {
+        last_net_log = now;
+        if (!g_ap_enabled && !g_sta_connected) {
+            printk("net: no softAP, no station yet, state=%s pending=%d (t=%lld s)\n",
+                   wifi_state_txt(g_sta_radio_state), (int)g_sta_connect_pending,
+                   now / 1000);
+        } else if (g_sta_configured && !g_sta_connected && g_ap_enabled) {
+            printk("net: AP fallback active, STA \"%s\" state=%s pending=%d (t=%lld s)\n",
+                   g_sta_ssid, wifi_state_txt(g_sta_radio_state),
+                   (int)g_sta_connect_pending, now / 1000);
+        }
+    }
 }
 
 void mraf_platform_net_info(bool *connected, char *ip, size_t ip_cap,
@@ -602,7 +1011,7 @@ void mraf_platform_net_info(bool *connected, char *ip, size_t ip_cap,
     if (ssid && ssid_cap) {
         snprintf(ssid, ssid_cap, "%s",
                  g_sta_connected ? g_sta_ssid
-                                 : (g_ap_enabled ? "MRAF-AP" : ""));
+                                 : (g_ap_enabled ? g_ap_ssid : ""));
     }
     if (rssi) {
         *rssi = g_rssi;
@@ -612,29 +1021,93 @@ void mraf_platform_net_info(bool *connected, char *ip, size_t ip_cap,
 void mraf_platform_wifi_scan(JsonDocument &doc)
 {
     JsonArray arr = doc["networks"].to<JsonArray>();
+    // The ESP32 radio only scans the 2.4 GHz band; surface that so the UI can
+    // explain why 5 GHz-only SSIDs never show up.
+    doc["radio"] = "2.4 GHz";
     if (!sta_iface) {
+        doc["error"] = "Wi-Fi station interface not ready";
         return;
     }
+
     g_scan_count = 0;
     k_sem_reset(&g_scan_done);
-    if (net_mgmt(NET_REQUEST_WIFI_SCAN, sta_iface, NULL, 0) != 0) {
-        return;
+    int ret = net_mgmt(NET_REQUEST_WIFI_SCAN, sta_iface, NULL, 0);
+    if (ret == -EINPROGRESS || ret == -EBUSY) {
+        // A scan is already running (or the driver is busy). Its results still
+        // arrive through the event callback below, so just wait for them.
+    } else if (ret != 0) {
+        // The station may have been mid-connect when the scan was asked for;
+        // give the radio a beat and retry once.
+        k_sleep(K_MSEC(500));
+        g_scan_count = 0;
+        k_sem_reset(&g_scan_done);
+        ret = net_mgmt(NET_REQUEST_WIFI_SCAN, sta_iface, NULL, 0);
+        if (ret != 0 && ret != -EINPROGRESS && ret != -EBUSY) {
+            char err[48];
+            snprintf(err, sizeof(err), "scan failed (err %d), radio busy", ret);
+            doc["error"] = err;
+            return;
+        }
     }
-    (void)k_sem_take(&g_scan_done, K_SECONDS(8));
-    for (size_t i = 0; i < g_scan_count; i++) {
+
+    // Wait for the scan to finish; results keep arriving even past the
+    // timeout, so report whatever was collected.
+    int wait = k_sem_take(&g_scan_done, K_SECONDS(8));
+    if (wait != 0 && g_scan_count == 0) {
+        // The request was accepted but neither results nor the done event
+        // arrived: the radio never reported back.
+        doc["error"] = "scan timed out with no results (radio did not report)";
+    }
+
+    // Collapse duplicates (same SSID heard on several APs/channels) keeping
+    // the strongest signal, and skip hidden networks.
+    size_t n = g_scan_count < ARRAY_SIZE(g_scan) ? g_scan_count : ARRAY_SIZE(g_scan);
+    size_t used = 0;
+    for (size_t i = 0; i < n; i++) {
+        const struct wifi_scan_result *res = &g_scan[i];
+        if (res->ssid_length == 0) {
+            continue;
+        }
+        bool dup = false;
+        for (size_t j = 0; j < used; j++) {
+            const struct wifi_scan_result *keep = &g_scan[j];
+            if (keep->ssid_length == res->ssid_length &&
+                memcmp(keep->ssid, res->ssid, res->ssid_length) == 0) {
+                dup = true;
+                if (res->rssi > keep->rssi) {
+                    g_scan[j] = *res;
+                }
+                break;
+            }
+        }
+        if (!dup && used != i) {
+            g_scan[used] = *res;
+        }
+        if (!dup) {
+            used++;
+        }
+    }
+
+    for (size_t i = 0; i < used; i++) {
         const struct wifi_scan_result *res = &g_scan[i];
         char name[WIFI_SSID_MAX_LEN + 1];
-        size_t n = res->ssid_length;
-        if (n > WIFI_SSID_MAX_LEN) {
-            n = WIFI_SSID_MAX_LEN;
+        size_t len = res->ssid_length;
+        if (len > WIFI_SSID_MAX_LEN) {
+            len = WIFI_SSID_MAX_LEN;
         }
-        memcpy(name, res->ssid, n);
-        name[n] = '\0';
+        memcpy(name, res->ssid, len);
+        name[len] = '\0';
         JsonObject o = arr.add<JsonObject>();
         o["ssid"] = name;
         o["rssi"] = res->rssi;
         o["secure"] = res->security != WIFI_SECURITY_TYPE_NONE;
+        o["channel"] = res->channel;
+        o["band"] = res->band == WIFI_FREQ_BAND_5_GHZ ? "5 GHz"
+                  : res->band == WIFI_FREQ_BAND_6_GHZ ? "6 GHz"
+                  : "2.4 GHz";
     }
+    doc["count"] = (int)used;
+    doc["scanned"] = (int)n;
 }
 
 void mraf_platform_led(bool on)

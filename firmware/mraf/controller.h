@@ -10,6 +10,10 @@ public:
 
     Config &config() { return cfg_; }
     const Config &config() const { return cfg_; }
+    uint8_t channelCount() const {
+        uint8_t n = cfg_.relay_count ? cfg_.relay_count : MAX_CHANNELS;
+        return n > MAX_CHANNELS ? MAX_CHANNELS : n;
+    }
 
     // Called about once per second. All timers use wall-clock epoch seconds so
     // the same logic works in the accelerated simulator.
@@ -54,10 +58,17 @@ private:
     time_t last_batt_log_ = 0;
     unsigned long pulse_clock_ms_ = 0;
 
+    uint8_t relayPin(uint8_t i) const { return cfg_.relay_pins[i] ? cfg_.relay_pins[i] : RELAY_PINS[i]; }
+    uint8_t relayOffPin(uint8_t i) const {
+        uint8_t p = cfg_.relay_off_pins[i] ? cfg_.relay_off_pins[i] : relayPin(i);
+        return p ? p : RELAY_PINS[i];
+    }
+    uint8_t pumpPin() const { return cfg_.pump_pin ? cfg_.pump_pin : PUMP_RELAY_PIN; }
     void writeRelayPin(uint8_t pin, bool on) const;
+    void releaseRelayPins(uint8_t i) const;
     void setRelayLogical(uint8_t i, bool on, time_t now);
     void setRelayPhysical(uint8_t i, bool on);
-    void startPulse(uint8_t i, uint16_t ms);
+    void startPulse(uint8_t i, uint16_t ms, bool on);
     void setPumpOutput(bool on, time_t now);
     void tripPump(const char *reason, time_t now);
     bool relayWanted(uint8_t i, bool power, uint16_t now_min, uint8_t weekday,

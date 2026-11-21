@@ -52,7 +52,9 @@ alive on a 12.8 V LiFePO4 battery while all relay coils drop out during a power 
   utterances like "turn on relay 3" or "boost pump 30 min" to controller
   actions. No language model, identical grammar on ESP32, simulator and server.
 - Native simulator with accelerated clock, fault injection, HTTP API and
-  scenario presets.
+  scenario presets. Settings → **Run self test** checks the ESP32, RTC, power,
+  radio, every relay coil, pump contactor and sensors, then prints a hardware
+  result list.
 - No custom PCB. Everything is DIN-rail terminals, ready-made modules and
   standard panel wiring.
 
@@ -305,13 +307,14 @@ docs/                  requirements, wiring, firmware, API, operation, video
 14. [Flash from an Android phone over USB OTG](docs/14-android-flash.md)
 15. [Toolchain setup for Windows and Linux](docs/15-toolchain-setup.md)
 16. [OKF knowledge base](okf/index.md)
+17. [Profile customisation + hardware self test (MP4)](docs/profile-customization-demo.mp4) — server-side record edits and dashboard, firmware dashboard, contactor pulses, dynamic relay counts and Settings self-test; [subtitles (VTT)](docs/profile-customization-demo.vtt)
 
 ## Verified in this workspace
 
 - `make test`: C++ schedule/controller tests (including recurring and pulse
-  cases) and 43 Python simulator/API tests pass (including chat, WireGuard,
+  cases) and 52 Python simulator/API tests pass (including chat, WireGuard,
   MCP, WebRTC config and config-secret cases).
-- `make server-test`: 64 Spring Boot tests pass against in-memory H2
+- `make server-test`: 68 Spring Boot tests pass against in-memory H2
   (registration, confirmation, credentials, data ACK, control, config,
   recurring, admin actions, device-user lookup, persistence reload, WireGuard
   control plane, STUN server, WebRTC registry/signalling and reconnect

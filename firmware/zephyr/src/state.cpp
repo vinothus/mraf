@@ -220,7 +220,7 @@ void mraf_build_status(JsonDocument &doc)
     JsonObject wrtc = doc["webrtc"].to<JsonObject>();
     mraf_webrtc_build_status(wrtc);
 
-    doc["profile"] = profileName(g_cfg.profile);
+    doc["profile"] = g_cfg.profile_id;
 
     JsonObject pw = doc["power"].to<JsonObject>();
     pw["present"] = g_ctrl.powerPresent();
@@ -234,7 +234,7 @@ void mraf_build_status(JsonDocument &doc)
     s["acs_zero_mv"] = 1250.0f;
 
     JsonArray relays = doc["relays"].to<JsonArray>();
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         const ChannelConfig &ch = g_ctrl.config().channels[i];
         const RelayRuntime &rt = g_ctrl.relay(i);
         JsonObject o = relays.add<JsonObject>();
@@ -336,7 +336,7 @@ void mraf_build_remote_data(JsonObject data, time_t now)
     data["sump_dry"] = g_ctrl.pump().sump_dry;
     data["wifi_rssi"] = ap ? 0 : rssi;
     data["ip"] = ip;
-    data["profile"] = profileName(g_cfg.profile);
+    data["profile"] = g_cfg.profile_id;
     data["confirmed"] = mraf_remote_confirmed();
 
     JsonObject p = data["pump"].to<JsonObject>();
@@ -348,12 +348,12 @@ void mraf_build_remote_data(JsonObject data, time_t now)
     p["fault_latched"] = g_ctrl.pump().fault_latched;
 
     JsonArray relays = data["relays"].to<JsonArray>();
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         relays.add(g_ctrl.relay(i).on ? 1 : 0);
     }
 
     JsonArray equipment = data["equipment"].to<JsonArray>();
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         const ChannelConfig &ch = g_ctrl.config().channels[i];
         JsonObject e = equipment.add<JsonObject>();
         e["id"] = i + 1;
@@ -392,8 +392,8 @@ bool mraf_apply_control(JsonObject cmd, time_t now, String &error)
 
     if (strcmp(target, "relay") == 0) {
         int id = cmd["id"] | 0;
-        if (id < 1 || id > MAX_CHANNELS) {
-            error = "relay id must be 1..12";
+        if (id < 1 || id > g_ctrl.channelCount()) {
+            error = String("relay id must be 1..") + g_ctrl.channelCount();
             return false;
         }
         g_ctrl.setRelayMode((uint8_t)(id - 1), mode, boost, now, pulse_ms);

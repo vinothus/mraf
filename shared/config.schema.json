@@ -16,7 +16,38 @@
         "subheading": {"type": "string", "maxLength": 95, "description": "Empty falls back to the device name."},
         "timezone": {"type": "string", "maxLength": 15, "default": "IST-5:30"},
         "auth_user": {"type": "string", "maxLength": 19, "default": "admin"},
-        "auth_pass": {"type": "string", "maxLength": 31, "description": "Write-only; omitted from GET responses."}
+        "auth_pass": {"type": "string", "maxLength": 31, "description": "Write-only; omitted from GET responses."},
+        "profile": {"type": "string", "maxLength": 23, "pattern": "^[a-z][a-z0-9_-]*$", "description": "Built-in profile or custom slug from the Profiles tab."}
+      }
+    },
+    "relay_count": {"type": "integer", "minimum": 1, "maximum": 12, "default": 12,
+      "description": "Number of active relays; channels/status are trimmed to this length."},
+    "pins": {
+      "type": "object",
+      "description": "Runtime ESP32-WROOM output map for the active relays and pump contactor.",
+      "properties": {
+        "relays": {"type": "array", "minItems": 1, "maxItems": 12,
+          "items": {"type": "integer", "minimum": 0, "maximum": 39}},
+        "relays_off": {"type": "array", "minItems": 1, "maxItems": 12,
+          "description": "Optional STOP/contactor GPIO per relay; equal to relays[i] when unused.",
+          "items": {"type": "integer", "minimum": 0, "maximum": 39}},
+        "pump": {"type": "integer", "minimum": 0, "maximum": 39, "default": 33}
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "description": "Profile library edited in the Profiles tab (persisted by the simulator).",
+      "items": {
+        "type": "object",
+        "required": ["id", "pins", "channels"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,22}$"},
+          "relay_count": {"type": "integer", "minimum": 1, "maximum": 12},
+          "name": {"type": "string", "maxLength": 39},
+          "unit": {"type": "string", "maxLength": 15},
+          "pins": {"type": "object"},
+          "channels": {"type": "array", "maxItems": 12}
+        }
       }
     },
     "wifi": {

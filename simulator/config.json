@@ -1,4 +1,5 @@
 {
+  "relay_count": 12,
   "device": {
     "name": "Neer Kaavalan",
     "heading": "நீர்காவலன்",
@@ -25,6 +26,85 @@
     "pass": "farm1234",
     "register": true
   },
+  "pins": {
+    "relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27],
+    "relays_off": [13, 14, 16, 17, 32, 2, 21, 22, 23, 25, 26, 27],
+    "pump": 33
+  },
+  "profiles": [
+    {
+      "id": "agri", "relay_count": 12, "name": "Agriculture", "unit": "Zone",
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 32, 2, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "channels": [
+        {"id": 1, "name": "Shed Light", "zone": "Zone A", "equipment": "light", "enabled": true, "days": 127, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "18:00", "off": "22:00"},
+        {"id": 2, "name": "Yard Light", "zone": "Zone A", "equipment": "light", "enabled": true, "days": 127, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "18:30", "off": "05:30"},
+        {"id": 3, "name": "Drip Zone A", "zone": "Zone B", "equipment": "valve", "enabled": true, "days": 21, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "06:00", "off": "06:30"},
+        {"id": 4, "name": "Drip Zone B", "zone": "Zone C", "equipment": "valve", "enabled": true, "days": 21, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "06:30", "off": "07:00"},
+        {"id": 5, "name": "Aerator 1", "zone": "Pond", "equipment": "motor", "enabled": true, "days": 127, "pulse_mode": true, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "22:00", "off": "04:00"},
+        {"id": 6, "name": "Aerator 2", "zone": "Pond", "equipment": "motor", "enabled": true, "days": 127, "pulse_mode": true, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "22:00", "off": "04:00"},
+        {"id": 7, "name": "Cattle Fan", "zone": "Shed", "equipment": "fan", "enabled": true, "days": 127, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "10:00", "off": "16:00"},
+        {"id": 8, "name": "Milking Light", "zone": "Shed", "equipment": "light", "enabled": true, "days": 127, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "04:30", "off": "06:00"},
+        {"id": 9, "name": "Gate Light", "zone": "Gate", "equipment": "light", "enabled": true, "days": 127, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "19:00", "off": "06:00"},
+        {"id": 10, "name": "Spare 1", "zone": "Zone 10", "equipment": "other", "enabled": false, "days": 0, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "06:00", "off": "07:00"},
+        {"id": 11, "name": "Spare 2", "zone": "Zone 11", "equipment": "other", "enabled": false, "days": 0, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "06:00", "off": "07:00"},
+        {"id": 12, "name": "Spare 3", "zone": "Zone 12", "equipment": "other", "enabled": false, "days": 0, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "06:00", "off": "07:00"}
+      ]
+    },
+    {
+      "id": "home", "relay_count": 12, "name": "Home", "unit": "Room",
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "channels": [
+        {"id": 1, "name": "Hall Light", "zone": "Room 1", "equipment": "light"},
+        {"id": 2, "name": "Porch Light", "zone": "Room 2", "equipment": "light"},
+        {"id": 3, "name": "Living Fan", "zone": "Room 3", "equipment": "fan"},
+        {"id": 4, "name": "Bedroom Fan", "zone": "Room 4", "equipment": "fan"},
+        {"id": 5, "name": "Kitchen Socket", "zone": "Room 5", "equipment": "socket"},
+        {"id": 6, "name": "Geyser", "zone": "Room 6", "equipment": "heater"},
+        {"id": 7, "name": "Hall Light 2", "zone": "Room 7", "equipment": "light"},
+        {"id": 8, "name": "Bedroom Light", "zone": "Room 8", "equipment": "light"},
+        {"id": 9, "name": "Garden Pump", "zone": "Room 9", "equipment": "pump"},
+        {"id": 10, "name": "Spare 1", "zone": "Room 10", "equipment": "other"},
+        {"id": 11, "name": "Spare 2", "zone": "Room 11", "equipment": "other"},
+        {"id": 12, "name": "Spare 3", "zone": "Room 12", "equipment": "other"}
+      ]
+    },
+    {
+      "id": "godown", "relay_count": 12, "name": "Godown", "unit": "Bay",
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "channels": [
+        {"id": 1, "name": "Bay 1 Light", "zone": "Bay 1", "equipment": "light"},
+        {"id": 2, "name": "Bay 2 Light", "zone": "Bay 2", "equipment": "light"},
+        {"id": 3, "name": "Rack Fan 1", "zone": "Bay 3", "equipment": "fan"},
+        {"id": 4, "name": "Rack Fan 2", "zone": "Bay 4", "equipment": "fan"},
+        {"id": 5, "name": "Shutter Motor", "zone": "Bay 5", "equipment": "motor", "pulse_mode": true},
+        {"id": 6, "name": "Loading Light", "zone": "Bay 6", "equipment": "light"},
+        {"id": 7, "name": "Bay 3 Light", "zone": "Bay 7", "equipment": "light"},
+        {"id": 8, "name": "Bay 4 Light", "zone": "Bay 8", "equipment": "light"},
+        {"id": 9, "name": "Gate Light", "zone": "Bay 9", "equipment": "light"},
+        {"id": 10, "name": "Spare 1", "zone": "Bay 10", "equipment": "other"},
+        {"id": 11, "name": "Spare 2", "zone": "Bay 11", "equipment": "other"},
+        {"id": 12, "name": "Spare 3", "zone": "Bay 12", "equipment": "other"}
+      ]
+    },
+    {
+      "id": "industry", "relay_count": 12, "name": "Industry", "unit": "Line",
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "channels": [
+        {"id": 1, "name": "Line 1 Motor", "zone": "Line 1", "equipment": "motor", "pulse_mode": true},
+        {"id": 2, "name": "Line 2 Motor", "zone": "Line 2", "equipment": "motor", "pulse_mode": true},
+        {"id": 3, "name": "Conveyor 1", "zone": "Line 3", "equipment": "motor", "pulse_mode": true},
+        {"id": 4, "name": "Conveyor 2", "zone": "Line 4", "equipment": "motor", "pulse_mode": true},
+        {"id": 5, "name": "Compressor", "zone": "Line 5", "equipment": "motor", "pulse_mode": true},
+        {"id": 6, "name": "Exhaust Fan", "zone": "Line 6", "equipment": "fan"},
+        {"id": 7, "name": "Line 3 Motor", "zone": "Line 7", "equipment": "motor", "pulse_mode": true},
+        {"id": 8, "name": "Heater 1", "zone": "Line 8", "equipment": "heater"},
+        {"id": 9, "name": "Heater 2", "zone": "Line 9", "equipment": "heater"},
+        {"id": 10, "name": "Spare 1", "zone": "Line 10", "equipment": "other"},
+        {"id": 11, "name": "Spare 2", "zone": "Line 11", "equipment": "other"},
+        {"id": 12, "name": "Spare 3", "zone": "Line 12", "equipment": "other"}
+      ]
+    }
+  ],
   "channels": [
     {"id": 1, "name": "Shed Light", "zone": "Zone A", "equipment": "light", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "18:00", "off": "22:00"}]},
     {"id": 2, "name": "Yard Light", "zone": "Zone A", "equipment": "light", "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "enabled": true, "days": 127, "mode": "auto", "windows": [{"on": "18:30", "off": "05:30"}]},

@@ -73,6 +73,27 @@ config MRAF_NTP_SERVER
 	string "SNTP server used at boot"
 	default "pool.ntp.org"
 
+config MRAF_WIFI_COUNTRY
+	string "Wi-Fi regulatory country code (ESP32 only)"
+	default "IN"
+	help
+	  ISO/IEC 3166-1 alpha-2 country code applied to the ESP32 radio before
+	  scanning and connecting. The chip default ("00", world-safe) only
+	  actively scans 2.4 GHz channels 1-11; routers on channels 12 or 13 then
+	  look like NO_AP_FOUND (disconnect reason 201). India allows 1-13, which
+	  is the default here to match the built-in IST timezone. Set to "00" to
+	  keep the world-safe domain instead.
+
+config MRAF_WIFI_BOOT_SCAN
+	bool "Scan and log visible 2.4 GHz networks before STA connect (ESP32 only)"
+	default y
+	help
+	  Runs one scan after applying the regulatory domain and logs every SSID,
+	  channel and RSSI seen by the ESP32 before the first connection attempt.
+	  This makes NO_AP_FOUND (reason 201) diagnosable from the serial log:
+	  a missing target means a 5 GHz-only AP, disabled 2.4 GHz radio, hidden
+	  SSID or SSID spelling mismatch rather than a Zephyr connect failure.
+
 config MRAF_SETTINGS_JSON_MAX
 	int "Maximum persisted configuration size"
 	default 4096

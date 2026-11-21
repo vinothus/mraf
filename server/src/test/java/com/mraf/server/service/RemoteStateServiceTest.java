@@ -171,12 +171,52 @@ class RemoteStateServiceTest {
         assertEquals("config", response.path("request").asText());
         assertEquals(id, response.path("id").asText());
         assertEquals("home", response.path("profile").asText());
+        assertEquals(12, response.path("relay_count").asInt());
         assertEquals("Pump House", response.path("channels").get(0).path("name").asText());
         assertEquals("motor", response.path("channels").get(0).path("equipment").asText());
         assertTrue(response.path("channels").get(0).path("pulse_mode").asBoolean());
         assertEquals(12, response.path("channels").size());
         assertEquals("Weekly soak", response.path("recurring").get(0).path("name").asText());
         assertTrue(response.path("pump").isObject());
+    }
+
+    @Test
+    void queuesConfigWithCustomRelayCount() throws Exception {
+        register();
+        service.confirmDevice(DEVICE, mapper.createObjectNode());
+        ControllerConfig cfg = ControllerConfig.demoDefaults();
+        cfg.relayCount = 2;
+        cfg.channels = new java.util.ArrayList<>(cfg.channels.subList(0, 2));
+
+        String id = service.applyConfig(DEVICE, cfg).path("id").asText();
+
+        JsonNode response = poll(confirmedPoll());
+        assertEquals("config", response.path("request").asText());
+        assertEquals(id, response.path("id").asText());
+        assertEquals(2, response.path("relay_count").asInt());
+        assertEquals(2, response.path("channels").size());
+        assertEquals(2, service.snapshot(DEVICE).path("config").path("relay_count").asInt());
+    }
+
+    @Test
+    void rejectsRelayCountMismatch() throws Exception {
+        register();
+        service.confirmDevice(DEVICE, mapper.createObjectNode());
+        ControllerConfig cfg = ControllerConfig.demoDefaults();
+        cfg.relayCount = 2;
+        assertThrows(IllegalArgumentException.class, () -> service.applyConfig(DEVICE, cfg));
+    }
+
+    @Test
+    void rejectsRelayControlBeyondConfiguredCount() throws Exception {
+        register();
+        service.confirmDevice(DEVICE, mapper.createObjectNode());
+        ControllerConfig cfg = ControllerConfig.demoDefaults();
+        cfg.relayCount = 2;
+        cfg.channels = new java.util.ArrayList<>(cfg.channels.subList(0, 2));
+        service.applyConfig(DEVICE, cfg);
+        JsonNode command = mapper.createObjectNode().put("target", "relay").put("id", 3).put("mode", "on");
+        assertThrows(IllegalArgumentException.class, () -> service.queueControl(DEVICE, command));
     }
 
     @Test

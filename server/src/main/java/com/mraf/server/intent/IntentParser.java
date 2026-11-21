@@ -35,6 +35,10 @@ public class IntentParser {
     private static final Pattern WORD_AUTO = Pattern.compile("\\b(auto|automatic|automatic mode|scheduled)\\b");
 
     public Intent parse(String text) {
+        return parse(text, 12);
+    }
+
+    public Intent parse(String text, int maxRelay) {
         String raw = text == null ? "" : text.trim();
         if (raw.isBlank()) {
             return Intent.help("Say things like 'turn on relay 3', 'pump off', 'all auto', "
@@ -100,8 +104,8 @@ public class IntentParser {
         }
 
         if (relayId != null) {
-            if (relayId < 1 || relayId > 12) {
-                return Intent.unknown("Relay " + relayId + " does not exist; valid ids are 1..12.");
+            if (relayId < 1 || relayId > maxRelay) {
+                return Intent.unknown("Relay " + relayId + " does not exist; valid ids are 1.." + maxRelay + ".");
             }
             if (pulseMs != null) {
                 return new Intent("control", "relay", relayId, "on", pulseMs, null,

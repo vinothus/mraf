@@ -172,7 +172,7 @@ static void buildStatus(JsonDocument &doc) {
     rem["device_id"] = g_cfg.device_id;
     rem["user"] = g_cfg.remote_user;
 
-    doc["profile"] = profileName(g_cfg.profile);
+    doc["profile"] = g_cfg.profile_id;
 
     JsonObject pw = doc["power"].to<JsonObject>();
     pw["present"] = g_ctrl.powerPresent();
@@ -186,7 +186,7 @@ static void buildStatus(JsonDocument &doc) {
     s["acs_zero_mv"] = g_acsZeroMv;
 
     JsonArray relays = doc["relays"].to<JsonArray>();
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         const ChannelConfig &ch = g_ctrl.config().channels[i];
         const RelayRuntime &rt = g_ctrl.relay(i);
         JsonObject o = relays.add<JsonObject>();
@@ -252,6 +252,48 @@ static void buildStatus(JsonDocument &doc) {
     }
 }
 
+static bool selfTestSafePin(uint8_t pin) {
+    static const uint8_t pins[] = {2,4,5,12,13,14,15,16,17,18,19,21,22,23,
+                                   25,26,27,32,33};
+    for (size_t i = 0; i < sizeof(pins); i++) if (pins[i] == pin) return true;
+    return false;
+}
+
+static uint8_t selfTestChannelCount() {
+    uint8_t n = g_cfg.relay_count ? g_cfg.relay_count : MAX_CHANNELS;
+    return n > MAX_CHANNELS ? MAX_CHANNELS : n;
+}
+
+static uint8_t selfTestRelayPin(uint8_t i) {
+    return g_cfg.relay_pins[i] ? g_cfg.relay_pins[i] : RELAY_PINS[i];
+}
+
+static uint8_t selfTestRelayOffPin(uint8_t i) {
+    uint8_t pin = g_cfg.relay_off_pins[i] ? g_cfg.relay_off_pins[i] : selfTestRelayPin(i);
+    return pin ? pin : RELAY_PINS[i];
+}
+
+static uint8_t selfTestPumpPin() {
+    return g_cfg.pump_pin ? g_cfg.pump_pin : PUMP_RELAY_PIN;
+}
+
+static void selfTestWritePin(uint8_t pin, bool on) {
+    digitalWrite(pin, RELAY_ACTIVE_LOW ? (on ? LOW : HIGH) : (on ? HIGH : LOW));
+}
+
+static bool selfTestPinEnergized(uint8_t pin) {
+    int raw = digitalRead(pin);
+    return RELAY_ACTIVE_LOW ? raw == LOW : raw == HIGH;
+}
+
+static void addSelfTestCheck(JsonArray checks, const char *name, bool ok,
+                             const char *detail, const char *severity = "fail") {
+    JsonObject check = checks.add<JsonObject>();
+    check["name"] = name;
+    check["status"] = ok ? "pass" : severity;
+    check["detail"] = detail;
+}
+
 // ---------------------------------------------------------------------------
 // HTTP handlers
 // ---------------------------------------------------------------------------
@@ -274,6 +316,162 @@ static void handleStatus() {
     JsonDocument d;
     buildStatus(d);
     sendJson(d);
+}
+
+static void handleSelfTest() {
+    if (!requireAuth()) return;
+    JsonDocument status;
+    buildStatus(status);
+
+    JsonDocument doc;
+    JsonArray checks = doc["checks"].to<JsonArray>();
+    char detail[192];
+    char name[48];
+
+    snprintf(detail, sizeof(detail), "ESP32 firmware %s responsive", FW_VERSION);
+    addSelfTestCheck(checks, "ESP32 controller", true, detail);
+
+    bool timeValid = status["time_valid"] | false;
+    snprintf(detail, sizeof(detail), "Device time %s · %s",
+             (const char *)(status["now_local"] | ""),
+             timeValid ? "valid" : "unsynchronised");
+    addSelfTestCheck(checks, "RTC clock", timeValid && g_rtcOk, detail);
+
+    float batteryV = status["power"]["battery_v"] | 0.0f;
+    bool mains = status["power"]["present"] | false;
+    snprintf(detail, sizeof(detail), "Mains %s · battery-backed %.2f V",
+             mains ? "present" : "outage", (double)batteryV);
+    addSelfTestCheck(checks, "Power rail", mains, detail, "warn");
+    addSelfTestCheck(checks, "Battery ADC", batteryV >= 11.0f, detail);
+
+    String ssid = g_apMode ? String(g_cfg.device_name) : WiFi.SSID();
+    String ip = g_apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
+    int rssi = g_apMode ? 0 : WiFi.RSSI();
+    bool wifiConnected = g_apMode || WiFi.status() == WL_CONNECTED;
+    snprintf(detail, sizeof(detail), "%s · %s · %d dBm", ssid.c_str(), ip.c_str(), rssi);
+    addSelfTestCheck(checks, "Wi-Fi radio", wifiConnected, detail);
+
+    uint8_t channels = selfTestChannelCount();
+    uint8_t used[2 * MAX_CHANNELS + 1];
+    size_t usedCount = 0;
+    bool pinsOk = true;
+    for (uint8_t i = 0; i < channels; i++) {
+        uint8_t pins[2] = {selfTestRelayPin(i), selfTestRelayOffPin(i)};
+        int count = pins[1] == pins[0] ? 1 : 2;
+        for (int n = 0; n < count; n++) {
+            uint8_t pin = pins[n];
+            if (!selfTestSafePin(pin)) pinsOk = false;
+            for (size_t j = 0; j < usedCount; j++) {
+                if (used[j] == pin) pinsOk = false;
+            }
+            if (usedCount < sizeof(used)) used[usedCount++] = pin;
+        }
+    }
+    uint8_t pumpPin = selfTestPumpPin();
+    if (!selfTestSafePin(pumpPin)) pinsOk = false;
+    for (size_t j = 0; j < usedCount; j++) {
+        if (used[j] == pumpPin) pinsOk = false;
+    }
+    snprintf(detail, sizeof(detail), "%u relays + pump on unique safe GPIOs", (unsigned)channels);
+    addSelfTestCheck(checks, "GPIO driver map", pinsOk, detail);
+
+    for (uint8_t i = 0; i < channels; i++) {
+        uint8_t pins[2] = {selfTestRelayPin(i), selfTestRelayOffPin(i)};
+        int count = pins[1] == pins[0] ? 1 : 2;
+        bool ok = true;
+        char labels[96] = "";
+        for (int n = 0; n < count; n++) {
+            uint8_t pin = pins[n];
+            if (!selfTestSafePin(pin)) {
+                ok = false;
+                continue;
+            }
+            int saved = digitalRead(pin);
+            selfTestWritePin(pin, true);
+            delay(20);
+            bool energized = selfTestPinEnergized(pin);
+            selfTestWritePin(pin, false);
+            delay(5);
+            bool released = !selfTestPinEnergized(pin);
+            digitalWrite(pin, saved);
+            yield();
+            ok = ok && energized && released;
+            char label[24];
+            snprintf(label, sizeof(label), "%s GPIO %u", n == 0 ? "START" : "STOP",
+                     (unsigned)pin);
+            if (labels[0]) strncat(labels, ", ", sizeof(labels) - strlen(labels) - 1);
+            strncat(labels, label, sizeof(labels) - strlen(labels) - 1);
+        }
+        snprintf(detail, sizeof(detail), "%s · coil %s", labels,
+                 ok ? "pulse/release OK" : "driver readback mismatch");
+        snprintf(name, sizeof(name), "Relay %u driver", (unsigned)(i + 1));
+        addSelfTestCheck(checks, name, ok, detail);
+    }
+
+    bool pumpOk = pinsOk;
+    if (selfTestSafePin(pumpPin)) {
+        int saved = digitalRead(pumpPin);
+        selfTestWritePin(pumpPin, true);
+        delay(20);
+        bool energized = selfTestPinEnergized(pumpPin);
+        selfTestWritePin(pumpPin, false);
+        delay(5);
+        bool released = !selfTestPinEnergized(pumpPin);
+        digitalWrite(pumpPin, saved);
+        yield();
+        pumpOk = pumpOk && energized && released;
+    }
+    const char *pumpFault = status["pump"]["fault"] | "";
+    if (!pumpFault[0]) pumpFault = "none";
+    snprintf(detail, sizeof(detail), "GPIO %u · state %s · fault %s", (unsigned)pumpPin,
+             (const char *)(status["pump"]["state"] | ""), pumpFault);
+    addSelfTestCheck(checks, "Pump contactor", pumpOk, detail);
+
+    float currentA = status["pump"]["current_a"] | 0.0f;
+    snprintf(detail, sizeof(detail), "ACS712 reads %.2f A · zero %.0f mV", (double)currentA,
+             (double)(status["sensors"]["acs_zero_mv"] | g_acsZeroMv));
+    addSelfTestCheck(checks, "Current sensor", currentA >= 0.0f && currentA <= 30.0f, detail);
+
+    bool tankFull = status["sensors"]["tank_full"] | false;
+    snprintf(detail, sizeof(detail), "input %s · %s", tankFull ? "active" : "idle",
+             tankFull ? "FULL" : "OK");
+    addSelfTestCheck(checks, "Tank float", true, detail);
+    bool sumpDry = status["sensors"]["sump_dry"] | false;
+    snprintf(detail, sizeof(detail), "input %s · %s", sumpDry ? "active" : "idle",
+             sumpDry ? "DRY" : "OK");
+    addSelfTestCheck(checks, "Sump float", true, detail);
+
+    int passed = 0;
+    int warned = 0;
+    int failed = 0;
+    for (JsonVariant check : checks) {
+        const char *state = check["status"] | "";
+        if (strcmp(state, "pass") == 0) passed++;
+        else if (strcmp(state, "warn") == 0) warned++;
+        else failed++;
+    }
+    int total = passed + warned + failed;
+    const char *result = failed == 0 ? "PASS" : "FAIL";
+    char summary[128];
+    if (warned) {
+        snprintf(summary, sizeof(summary), "%s · %d/%d checks passed, %d warning(s)",
+                 result, passed, total, warned);
+    } else {
+        snprintf(summary, sizeof(summary), "%s · %d/%d checks passed",
+                 result, passed, total);
+    }
+    char finished[32];
+    snprintf(finished, sizeof(finished), "%s", localTimeString(time(nullptr)));
+
+    doc["ok"] = failed == 0;
+    doc["result"] = result;
+    doc["summary"] = summary;
+    doc["passed"] = passed;
+    doc["warnings"] = warned;
+    doc["failed"] = failed;
+    doc["total"] = total;
+    doc["finished"] = finished;
+    sendJson(doc);
 }
 
 static void handleConfigGet() {
@@ -350,8 +548,8 @@ static bool applyControlCommand(JsonObject cmd, time_t now, String &error) {
 
     if (strcmp(target, "relay") == 0) {
         int id = cmd["id"] | 0;
-        if (id < 1 || id > MAX_CHANNELS) {
-            error = "relay id must be 1..12";
+        if (id < 1 || id > g_ctrl.channelCount()) {
+            error = String("relay id must be 1..") + g_ctrl.channelCount();
             return false;
         }
         g_ctrl.setRelayMode((uint8_t)(id - 1), mode, boost, now, pulse_ms);
@@ -417,7 +615,7 @@ static void buildRemoteData(JsonObject data, time_t now) {
     data["sump_dry"] = g_ctrl.pump().sump_dry;
     data["wifi_rssi"] = g_apMode ? 0 : WiFi.RSSI();
     data["ip"] = g_apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
-    data["profile"] = profileName(g_cfg.profile);
+    data["profile"] = g_cfg.profile_id;
     data["confirmed"] = g_remoteConfirmed;
 
     JsonObject p = data["pump"].to<JsonObject>();
@@ -429,11 +627,11 @@ static void buildRemoteData(JsonObject data, time_t now) {
     p["fault_latched"] = g_ctrl.pump().fault_latched;
 
     JsonArray relays = data["relays"].to<JsonArray>();
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++)
+    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++)
         relays.add(g_ctrl.relay(i).on ? 1 : 0);
 
     JsonArray equipment = data["equipment"].to<JsonArray>();
-    for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
+    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         const ChannelConfig &ch = g_ctrl.config().channels[i];
         JsonObject e = equipment.add<JsonObject>();
         e["id"] = i + 1;
@@ -465,16 +663,14 @@ static void applyRemoteMeta(JsonObject res, time_t now) {
 
     const char *profile = res["profile"] | "";
     if (profile[0]) {
-        uint8_t p = g_cfg.profile;
-        if (strcmp(profile, "agri") == 0) p = PROFILE_AGRI;
-        else if (strcmp(profile, "home") == 0) p = PROFILE_HOME;
-        else if (strcmp(profile, "godown") == 0) p = PROFILE_GODOWN;
-        else if (strcmp(profile, "industry") == 0) p = PROFILE_INDUSTRY;
-        if (p != g_cfg.profile) {
-            g_cfg.profile = p;
-            g_ctrl.applyConfig(g_cfg);
-            g_ctrl.addEvent("remote", "profile updated by server", now);
-            changed = true;
+        char previous[sizeof(g_cfg.profile_id)];
+        copyRemoteText(previous, sizeof(previous), g_cfg.profile_id);
+        if (settingsSetProfile(g_cfg, profile)) {
+            if (strcmp(previous, g_cfg.profile_id) != 0) {
+                g_ctrl.applyConfig(g_cfg);
+                g_ctrl.addEvent("remote", "profile updated by server", now);
+                changed = true;
+            }
         }
     }
 
@@ -502,7 +698,7 @@ static void remotePoll() {
     req["fw"] = FW_VERSION;
     req["token"] = g_cfg.coap_token;
     req["time"] = (uint32_t)now;
-    req["profile"] = profileName(g_cfg.profile);
+    req["profile"] = g_cfg.profile_id;
     req["confirmed"] = g_remoteConfirmed;
     req["register"] = g_cfg.remote_register;
     req["poll_interval_sec"] = g_cfg.coap_interval_sec;
@@ -830,6 +1026,7 @@ void setup() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/health", HTTP_GET, handleHealth);
     server.on("/api/status", HTTP_GET, handleStatus);
+    server.on("/api/selftest", HTTP_POST, handleSelfTest);
     server.on("/api/config", HTTP_GET, handleConfigGet);
     server.on("/api/config", HTTP_POST, handleConfigPost);
     server.on("/api/control", HTTP_POST, handleControl);

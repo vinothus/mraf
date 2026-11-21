@@ -314,6 +314,47 @@ static void testPulseRelay() {
     check(!c.relay(0).output, "off pulse releases");
 }
 
+static void testRelayCount() {
+    Config cfg = baseConfig();
+    cfg.relay_count = 2;
+    Controller c;
+    c.begin(cfg);
+    check(c.channelCount() == 2, "channelCount follows relay_count");
+    c.setRelayMode(2, MODE_ON, 0, 1000);
+    check(!c.relay(2).on, "relay beyond relay_count is inactive");
+}
+
+static void testMotorContactorTwoPins() {
+    Config cfg = baseConfig();
+    cfg.pump.enabled = false;
+    cfg.relay_pins[0] = RELAY_PINS[0];
+    cfg.relay_off_pins[0] = 32;
+    ChannelConfig &ch = cfg.channels[0];
+    ch.pulse_mode = true;
+    ch.pulse_on_ms = 100;
+    ch.pulse_off_ms = 50;
+    ch.mode = MODE_OFF;
+
+    Controller c;
+    c.begin(cfg);
+    c.setPulseClock(1000);
+    c.setRelayMode(0, MODE_ON, 0, 1000);
+    check(g_mraf_pin_state[cfg.relay_pins[0]] == LOW, "START pin energised");
+    check(g_mraf_pin_state[cfg.relay_off_pins[0]] == HIGH, "STOP pin idle during START");
+
+    c.setPulseClock(1100);
+    c.servicePulses();
+    check(g_mraf_pin_state[cfg.relay_pins[0]] == HIGH, "START pin released");
+
+    c.setRelayMode(0, MODE_OFF, 0, 1001);
+    check(g_mraf_pin_state[cfg.relay_off_pins[0]] == LOW, "STOP pin energised");
+    check(g_mraf_pin_state[cfg.relay_pins[0]] == HIGH, "START pin idle during STOP");
+
+    c.setPulseClock(1150);
+    c.servicePulses();
+    check(g_mraf_pin_state[cfg.relay_off_pins[0]] == HIGH, "STOP pin released");
+}
+
 static void testRecurringRelay() {
     Config cfg = baseConfig();
     cfg.pump.enabled = false;
@@ -378,6 +419,8 @@ int main() {
     testMinimumOffTime();
     testRelayScheduleManualAndBoost();
     testPulseRelay();
+    testRelayCount();
+    testMotorContactorTwoPins();
     testRecurringRelay();
 
     if (failures) {

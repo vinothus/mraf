@@ -1,16 +1,26 @@
 package com.mraf.server.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.ArrayList;
 import java.util.List;
 
 public class ControllerConfig {
     public String profile = "agri";
+    @JsonProperty("relay_count")
+    public Integer relayCount = null;
     public List<ChannelConfig> channels = new ArrayList<>();
     public List<RecurringSchedule> recurring = new ArrayList<>();
     public PumpConfig pump = new PumpConfig();
 
+    public int activeRelayCount() {
+        if (relayCount != null && relayCount >= 1 && relayCount <= 12) return relayCount;
+        return channels == null ? 0 : Math.min(12, channels.size());
+    }
+
     public static ControllerConfig demoDefaults() {
         ControllerConfig cfg = new ControllerConfig();
+        cfg.relayCount = 12;
         cfg.channels.add(ch(1, "Shed Light", "Zone A", "light", true, 127, "18:00", "22:00"));
         cfg.channels.add(ch(2, "Yard Light", "Zone A", "light", true, 127, "18:30", "05:30"));
         cfg.channels.add(ch(3, "Drip Zone A", "Zone B", "valve", true, 21, "06:00", "06:30"));

@@ -245,16 +245,23 @@ curl -u admin:farm1234 \
 Response:
 
 ```json
-{"ok": true, "reboot_required": false, "device": {}, "channels": [], "pump": {}}
+{"ok": true, "reboot_required": false}
 ```
 
-The example is abbreviated. `reboot_required` is true when Wi-Fi, hostname or
-auth settings changed; the controller responds first, then reboots.
+`reboot_required` is true when Wi-Fi, hostname or auth settings changed; the
+controller responds first, then reboots. The saved configuration is fetched
+back with `GET /api/config`; the POST reply is intentionally kept small so the
+device does not build a second full config document while the first is still
+in memory.
 
 Validation rules include:
 
-- 1-12 channels; missing channels are padded as disabled spares.
-- `device.profile` is `agri`, `home`, `godown` or `industry`.
+- `relay_count` selects how many relays are active (1-12). `channels` is
+  trimmed/padded to that length; the dashboard and `/api/status` expose only
+  the active relays. Omitted `relay_count` defaults to the number of supplied
+  channels (or 12 for older configs).
+- `device.profile` is `agri`, `home`, `godown`, `industry` or a custom lowercase
+  slug from the Profiles tab (`a-z`, `0-9`, `-`, `_`, max 23 chars).
 - `equipment` is `valve`, `light`, `motor`, `fan`, `pump`, `socket`, `heater`,
   `door` or `other`.
 - `pulse_on_ms` and `pulse_off_ms` are 20-10000 ms. `pulse_mode` enables
@@ -263,10 +270,28 @@ Validation rules include:
 - `mode` is `auto`, `on` or `off`.
 - Times are `HH:MM`, 00:00-23:59.
 - Up to 4 windows per channel/pump.
+- `pins.relays` maps relay 1-12 to ESP32 GPIOs, `pins.relays_off` optionally
+  maps a second STOP/contactor GPIO for each relay, and `pins.pump` maps the
+  pump contactor. When a motor uses START/STOP push buttons, the ON window
+  pulses `relays[i]` for `pulse_on_ms` and the OFF window pulses
+  `relays_off[i]` for `pulse_off_ms`; both coils then release. When
+  `relays_off[i]` equals `relays[i]`, the single-GPIO latching relay behavior
+  is unchanged. Only safe output GPIOs are accepted (2, 4, 5, 12-19, 21-23,
+  25-27, 32, 33) and no pin may be shared. `channels[].pin`/`pin_off` are
+  accepted as aliases for `pins.relays[i]`/`pins.relays_off[i]`.
+- `profiles` is the optional profile library edited by the Profiles tab. Each
+  profile has an `id`, `relay_count`, `name`, `unit`, `pins` and that many
+  `channels` with a single
+  `on`/`off` window plus `pulse_on_ms`/`pulse_off_ms`. The firmware applies the
+  selected profile's pins/channels on "Apply to device"; the simulator stores
+  the library in its config file.
 - Up to 8 recurring schedules. `repeat` is `daily`, `weekly`, `monthly` or
   `yearly`; `day_of_month` 1-31, `month` 1-12, `action` is `on`, `off` or
   `auto`, and channels are selected with `channel_mask` (bit 0 = relay 1) or a
   `channels` id array. Off rules win over on rules.
+- `POST /api/selftest` runs a non-destructive hardware check and returns
+  `checks[]` with PASS/WARN/FAIL per ESP32 subsystem, relay coil, contactor and
+  sensor, plus an overall `summary`.
 - CoAP `port` 1-65535, `path` starts with `/`, `interval_sec` 10-3600,
   `user`/`pass` are the server login stored at registration.
 - `min_off_sec` 30-3600, `max_run_min` 1-720, `recovery_delay_sec` 0-600,
@@ -348,11 +373,19 @@ Returns up to 48 stored events; the status object includes the last 30.
 Returns visible networks:
 
 ```json
-{"networks": [{"ssid": "farm-wifi", "rssi": -61, "secure": true}]}
+{"networks": [{"ssid": "farm-wifi", "rssi": -61, "secure": true,
+               "channel": 6, "band": "2.4 GHz"}],
+ "radio": "2.4 GHz", "count": 1, "scanned": 1}
 ```
 
-Scanning temporarily interrupts the station connection. Use it from the
-Settings page, not in a tight loop.
+Duplicate SSIDs heard on multiple APs are collapsed to the strongest signal.
+`error` is set (instead of `networks` being silently empty) when the radio
+could not run a scan, e.g. while it is busy connecting. The ESP32 radio scans
+the 2.4 GHz band only; 5 GHz-only SSIDs never appear.
+
+Scanning temporarily interrupts the station connection and blocks an HTTP
+worker for up to 8 s. Use it from the Settings page; the dashboard pauses its
+status polling while a scan is in flight.
 
 ## POST /api/reboot
 

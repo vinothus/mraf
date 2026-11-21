@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
 
 #include "coap_client.h"
 #include "config.h"
@@ -134,18 +135,10 @@ static void applyRemoteMeta(JsonObject res, time_t now)
 
     const char *profile = res["profile"] | "";
     if (profile[0]) {
-        uint8_t p = g_cfg.profile;
-        if (strcmp(profile, "agri") == 0) {
-            p = PROFILE_AGRI;
-        } else if (strcmp(profile, "home") == 0) {
-            p = PROFILE_HOME;
-        } else if (strcmp(profile, "godown") == 0) {
-            p = PROFILE_GODOWN;
-        } else if (strcmp(profile, "industry") == 0) {
-            p = PROFILE_INDUSTRY;
-        }
-        if (p != g_cfg.profile) {
-            g_cfg.profile = p;
+        char previous[sizeof(g_cfg.profile_id)];
+        copyRemoteText(previous, sizeof(previous), g_cfg.profile_id);
+        if (settingsSetProfile(g_cfg, profile) &&
+            strcmp(previous, g_cfg.profile_id) != 0) {
             g_ctrl.applyConfig(g_cfg);
             g_ctrl.addEvent("remote", "profile updated by server", now);
             changed = true;
@@ -183,7 +176,7 @@ static void remotePoll(void)
     req["fw"] = FW_VERSION;
     req["token"] = g_cfg.coap_token;
     req["time"] = (uint32_t)now;
-    req["profile"] = profileName(g_cfg.profile);
+    req["profile"] = g_cfg.profile_id;
     req["confirmed"] = g_remoteConfirmed;
     req["register"] = g_cfg.remote_register;
     req["poll_interval_sec"] = g_cfg.coap_interval_sec;
@@ -210,6 +203,9 @@ static void remotePoll(void)
         return;
     }
 
+    printk("MRAF: CoAP POST %s:%u%s token=%s\n", g_cfg.coap_host,
+           (unsigned)g_cfg.coap_port, g_cfg.coap_path,
+           g_cfg.coap_token[0] ? "set" : "empty");
     int code = coapPost(g_cfg.coap_host, g_cfg.coap_port, g_cfg.coap_path,
                         body, resp, sizeof(resp), 900);
     g_remoteLastCode = code;
@@ -217,11 +213,14 @@ static void remotePoll(void)
         g_remoteLastOk = false;
         snprintf(g_remoteLastError, sizeof(g_remoteLastError),
                  "CoAP error %d", code);
+        printk("MRAF: CoAP poll failed code=%d error=%s\n", code,
+               g_remoteLastError);
         return;
     }
 
     g_remoteLastOk = true;
     g_remoteLastError[0] = '\0';
+    printk("MRAF: CoAP poll ok code=%d device=%s\n", code, g_cfg.device_id);
 
     g_remoteAckId[0] = '\0';
     g_remoteAckResult[0] = '\0';
@@ -404,14 +403,31 @@ static void remotePoll(void)
 
 static void remoteThread(void *, void *, void *)
 {
+    bool lastReady = false;
+    bool lastConnected = false;
+    printk("MRAF: remote config enabled=%d host=%s port=%u path=%s interval=%us\n",
+           g_cfg.coap_enabled ? 1 : 0,
+           g_cfg.coap_host[0] ? g_cfg.coap_host : "(none)",
+           (unsigned)g_cfg.coap_port, g_cfg.coap_path,
+           (unsigned)g_cfg.coap_interval_sec);
     while (1) {
         k_sleep(K_SECONDS(1));
-        if (!g_cfg.coap_enabled || !g_cfg.coap_host[0]) {
+        bool ready = g_cfg.coap_enabled && g_cfg.coap_host[0] != '\0';
+        if (ready != lastReady) {
+            printk("MRAF: remote polling %s\n", ready ? "enabled" : "disabled");
+            lastReady = ready;
+        }
+        if (!ready) {
             continue;
         }
         bool connected = false;
         mraf_platform_net_info(&connected, nullptr, 0, nullptr, 0, nullptr);
-        if (!connected || mraf_platform_is_ap_mode()) {
+        bool canPoll = connected && !mraf_platform_is_ap_mode();
+        if (canPoll != lastConnected) {
+            printk("MRAF: remote STA %s\n", canPoll ? "connected" : "not ready");
+            lastConnected = canPoll;
+        }
+        if (!canPoll) {
             continue;
         }
         int64_t now_ms = k_uptime_get();
@@ -432,6 +448,7 @@ static struct k_thread g_remote_thread;
 
 void mraf_remote_start(void)
 {
+    printk("MRAF: remote poll thread started\n");
     k_thread_create(&g_remote_thread, g_remote_stack,
                     K_THREAD_STACK_SIZEOF(g_remote_stack), remoteThread,
                     nullptr, nullptr, nullptr, K_PRIO_PREEMPT(7), 0, K_NO_WAIT);

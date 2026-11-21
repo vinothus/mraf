@@ -16,7 +16,8 @@ enum Profile : uint8_t {
     PROFILE_AGRI = 0,
     PROFILE_HOME = 1,
     PROFILE_GODOWN = 2,
-    PROFILE_INDUSTRY = 3
+    PROFILE_INDUSTRY = 3,
+    PROFILE_CUSTOM = 4
 };
 
 enum Equipment : uint8_t {
@@ -101,6 +102,11 @@ struct Config {
 
     char device_id[24];                 // stable identity sent to the server
     uint8_t profile;                    // Profile
+    char profile_id[24];                // built-in or custom profile slug
+    uint8_t relay_count;                // active relays (1..MAX_CHANNELS)
+    uint8_t relay_pins[MAX_CHANNELS];   // runtime relay GPIO map (profile tab)
+    uint8_t relay_off_pins[MAX_CHANNELS]; // STOP/contactor GPIO map (0 = same as relay_pins)
+    uint8_t pump_pin;                   // runtime pump contactor GPIO
 
     char wifi_ssid[33];
     char wifi_pass[65];
@@ -130,6 +136,7 @@ struct RelayRuntime {
     bool recurring_active;
     bool boost_active;
     bool pulsing;
+    uint8_t pulse_pin;                  // GPIO currently being pulsed
     unsigned long pulse_until_ms;
     time_t boost_until;
     time_t last_change;

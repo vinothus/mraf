@@ -116,8 +116,16 @@ input[type=checkbox]{width:16px;height:16px;padding:0;accent-color:var(--accent)
 .win{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .win span{color:var(--muted);font-size:13px}
 .win .time{width:120px}
-.settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
-.field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+ .settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+ .st-list{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+ .st-row{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:12px}
+ .st-badge{font-weight:700;min-width:44px}
+ .st-badge.pass{color:var(--accent)}
+ .st-badge.warn{color:var(--warn)}
+ .st-badge.fail{color:var(--danger)}
+ .st-name{color:var(--txt);font-weight:600}
+ .st-detail{color:var(--muted);margin-top:2px}
+ .field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .field label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .hint{font-size:12px;color:var(--muted);margin-top:4px}
@@ -134,6 +142,16 @@ input[type=checkbox]{width:16px;height:16px;padding:0;accent-color:var(--accent)
 .rec-chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
 .rec-chips label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);
   border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:var(--panel2)}
+.profile-select{min-width:190px}
+.prof-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.prof-fields .field{margin-bottom:0}
+.prof-row .prof-pin{width:96px}
+.prof-row .prof-pin-off{width:96px}
+.prof-row .relay-del{font-size:12px;padding:3px 8px}
+.prof-stop{display:none}
+.prof-row.contactor .prof-stop{display:flex}
+.prof-row input[type=time]{width:120px}
+.prof-row input[type=number]{width:92px}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(20px);
   background:#1c2c25;border:1px solid var(--line);color:var(--txt);padding:11px 16px;
   border-radius:12px;box-shadow:var(--shadow);opacity:0;pointer-events:none;
@@ -234,6 +252,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
   <button data-tab="sched">Daily schedules</button>
   <button data-tab="rec">Recurring</button>
   <button data-tab="settings">Settings</button>
+  <button data-tab="profiles">Profiles</button>
   <button data-tab="tunnel">Tunnel</button>
   <button data-tab="live">Live P2P</button>
   <button data-tab="chat">Assistant</button>
@@ -367,7 +386,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <div class="field"><label>SSID</label><input id="set-ssid" class="wide" list="ssid-list"><datalist id="ssid-list"></datalist></div>
         <div class="field"><label>New password (blank = unchanged)</label><input id="set-wifipass" type="password" class="wide" placeholder="unchanged"></div>
         <div class="btnrow"><button class="action" id="scan-wifi">Scan Wi-Fi</button></div>
-        <div class="hint">Changing Wi-Fi, hostname or login reboots the controller. With no Wi-Fi it starts an access point: NeerKaavalan-xxxxxx / farm1234.</div>
+        <div class="hint">The ESP32 radio scans 2.4 GHz only, so 5 GHz-only SSIDs never appear. Changing Wi-Fi, hostname or login reboots the controller. With no Wi-Fi it starts an access point named after the device ID (e.g. <b>ESP32-B03FD3</b>) with your admin login password (default farm1234) — look for that name in your Wi-Fi list.</div>
       </div>
       <div class="card">
         <h3>Remote server (open CoAP)</h3>
@@ -405,6 +424,11 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <div class="field"><label>Max boost (min)</label><input id="set-maxboost" type="number" min="1" max="1440"></div>
       </div>
       <div class="card">
+        <h3>Hardware self test</h3>
+        <div class="btnrow"><button class="action primary" id="run-selftest" type="button">Run self test</button></div>
+        <div class="hint" id="self-test-result">Checks the ESP32, RTC, power rail, radio, GPIO driver map, every relay coil, pump contactor, current sensor and float inputs. Relay outputs are pulsed briefly and released.</div>
+      </div>
+      <div class="card">
         <h3>Time &amp; maintenance</h3>
         <div class="field"><label>Set controller time (local)</label><input id="set-time" type="datetime-local"></div>
         <div class="btnrow"><button class="action" id="apply-time">Set time</button></div>
@@ -412,6 +436,34 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <hr style="border-color:var(--line);margin:16px 0">
         <div class="btnrow"><button class="action danger" id="reboot">Reboot controller</button></div>
       </div>
+    </div>
+  </section>
+
+  <section id="tab-profiles" hidden>
+    <div class="toolbar">
+      <h2>Profiles &amp; pin mapping</h2><div class="spacer"></div>
+      <select id="profile-select" class="profile-select" aria-label="Select profile"></select>
+      <button class="action" id="profile-new" type="button">+ New profile</button>
+      <button class="action" id="profile-copy" type="button">Duplicate</button>
+      <button class="action danger" id="profile-delete" type="button">Delete</button>
+      <button class="action" id="profile-relay-add" type="button">+ Add relay</button>
+      <button class="action" id="profile-save" type="button">Save profile</button>
+      <button class="action primary" id="profile-apply" type="button">Apply to device</button>
+    </div>
+    <div class="hint" style="margin-bottom:12px">Customise an ESP32-WROOM-32 (38-pin DevKit V1) installation: choose how many relays this profile needs (new profiles start with one), map each relay and the pump contactor to a GPIO, then set the daily ON/OFF window and momentary pulse timings. The dashboard only shows the relays defined by the active profile. For a motor with a contactor and START/STOP push buttons, enable "pulse" and enter a second GPIO: the ON time pulses START for the configured milliseconds, the OFF time pulses STOP for its configured milliseconds, then both coils release. A motor without a contactor uses one GPIO that stays on for the window. GPIO 34–39 are input-only; 4 and 5 are used by the RTC. Duplicate GPIOs are rejected.</div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-head"><h3>Profile details</h3><span class="pill" id="profile-kind">editable</span></div>
+      <div class="prof-fields">
+        <div class="field"><label>Profile ID (used by the device)</label><input id="prof-id" maxlength="23" placeholder="greenhouse"></div>
+        <div class="field"><label>Display name</label><input id="prof-name" maxlength="39" placeholder="Greenhouse"></div>
+        <div class="field"><label>Location label</label><input id="prof-unit" maxlength="15" placeholder="Zone / Room / Bay / Line"></div>
+        <div class="field"><label>Pump contactor GPIO</label><select id="prof-pump-pin"></select></div>
+      </div>
+      <div class="hint" id="prof-summary"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Relay → GPIO → ON/OFF timing</h3><span class="pill">12 channels</span></div>
+      <div id="profile-relays"></div>
     </div>
   </section>
 
@@ -484,12 +536,25 @@ const PROFILE_INFO = {
   godown:{unit:"Bay",hint:"Godown: map relays to bays, rack lights, fans and doors."},
   industry:{unit:"Line",hint:"Industry: map relays to production lines, motors and contactors."}
 };
+const GPIO_PINS = [2,4,5,12,13,14,15,16,17,18,19,21,22,23,25,26,27,32,33];
+const PROFILE_STORE_KEY = "mraf-profiles-v1";
+const PROFILE_SAMPLES = {
+  agri:["Shed Light","Yard Light","Drip Zone A","Drip Zone B","Aerator 1","Aerator 2","Cattle Fan","Milking Light","Gate Light","Spare 1","Spare 2","Spare 3"],
+  home:["Hall Light","Porch Light","Living Fan","Bedroom Fan","Kitchen Socket","Geyser","Hall Light 2","Bedroom Light","Garden Pump","Spare 1","Spare 2","Spare 3"],
+  godown:["Bay 1 Light","Bay 2 Light","Rack Fan 1","Rack Fan 2","Shutter Motor","Loading Light","Bay 3 Light","Bay 4 Light","Gate Light","Spare 1","Spare 2","Spare 3"],
+  industry:["Line 1 Motor","Line 2 Motor","Conveyor 1","Conveyor 2","Compressor","Exhaust Fan","Line 3 Motor","Heater 1","Heater 2","Spare 1","Spare 2","Spare 3"]
+};
 let status = null;
+let isSimulator = null;
 let config = null;
+let profileSelectedId = null;
 let schedulesRendered = false;
 let recurringRendered = false;
 let lastEvents = [];
 let chatMessages = [];
+// True while a Wi-Fi scan is in flight; the 2 s status polling pauses so the
+// ESP32's small HTTP server is not flooded while the radio scans channels.
+let wifiScanBusy = false;
 
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
@@ -501,7 +566,14 @@ const fmtMin = (sec) => {
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
   return h ? `${h}h ${m}m` : `${m}m`;
 };
-const unitFor = () => (PROFILE_INFO[(config && config.device && config.device.profile) || "agri"] || PROFILE_INFO.agri).unit;
+const activeProfile = () => (config && config.profiles || []).find(p => p.id === ((config && config.device && config.device.profile) || "agri"));
+const profileInfo = () => {
+  const custom = activeProfile();
+  if(custom && custom.unit) return {unit:custom.unit, hint:`${custom.name||custom.id}: custom relay, GPIO and timing profile.`};
+  const id = (config && config.device && config.device.profile) || "agri";
+  return PROFILE_INFO[id] || PROFILE_INFO.agri;
+};
+const unitFor = () => profileInfo().unit;
 
 function applyTheme(theme, persist=false){
   const light = theme === "light";
@@ -568,10 +640,39 @@ async function fetchJsonRetry(url, opts={}, tries=5, delayMs=350){
   throw last || new Error("unreachable");
 }
 async function post(path, body){ return api(path, {method:"POST", body: JSON.stringify(body)}); }
+async function controllerIsSimulator(){
+  if(isSimulator !== null) return isSimulator;
+  if(status && typeof status.simulator === "boolean") isSimulator = status.simulator;
+  else {
+    try { isSimulator = !!(await api("/health")).simulator; }
+    catch(_) { isSimulator = false; }
+  }
+  return isSimulator;
+}
+
+async function runSelfTest(){
+  const btn = $("#run-selftest"), out = $("#self-test-result");
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Testing…";
+  out.innerHTML = `<div class="hint">Running hardware checks…</div>`;
+  try{
+    const d = await post("/api/selftest", {});
+    const rows = (d.checks||[]).map(c=>`<div class="st-row"><span class="st-badge ${esc(c.status)}">${esc(c.status.toUpperCase())}</span><div><div class="st-name">${esc(c.name)}</div><div class="st-detail">${esc(c.detail)}</div></div></div>`).join("");
+    out.innerHTML = `<div class="hint" style="font-weight:700;color:var(--${d.ok?"accent":"danger"})">${esc(d.summary)} · ${esc(d.finished)}</div><div class="st-list">${rows}</div>`;
+    toast(d.summary, 6000);
+  }catch(e){
+    out.textContent = "Self test failed: " + e.message;
+    toast("Self test failed: " + e.message, 6000);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
 
 /* ---------------- WebRTC live peer-to-peer ---------------- */
 const DC_PATHS = new Set(["/api/status","/api/config","/api/events","/api/wireguard",
-  "/api/control","/api/chat","/api/time","/api/pump/reset"]);
+  "/api/control","/api/chat","/api/time","/api/pump/reset","/api/selftest"]);
 const webrtc = {
   enabled:false, server:"", token:"", deviceId:"", ice:[], stun:"", turn:"", pollMs:400,
   forceRelay:false,
@@ -812,9 +913,10 @@ function webrtcRender(){
 
 function setTab(name){
   $$("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
-  ["dash","sched","rec","settings","tunnel","live","chat","events"].forEach(k => { $("#tab-"+k).hidden = (k !== name); });
+  ["dash","sched","rec","settings","profiles","tunnel","live","chat","events"].forEach(k => { $("#tab-"+k).hidden = (k !== name); });
   if(name === "sched" && !schedulesRendered) renderSchedules();
   if(name === "rec" && !recurringRendered) renderRecurring();
+  if(name === "profiles") renderProfiles();
   if(name === "tunnel") renderTunnel();
   if(name === "live") webrtcRender();
   if(name === "chat") renderChat();
@@ -881,16 +983,21 @@ function renderRelays(){
     const pulsing = !!r.pulsing;
     const eq = r.equipment || "other";
     const windows = (r.windows||[]).map(w=>esc(w.on)+"–"+esc(w.off)).join(", ") || "no daily window";
+    const contactor = r.pulse_mode && r.pin_off && r.pin_off !== r.pin;
+    const gpio = contactor
+      ? `START GPIO ${esc(r.pin)} · STOP GPIO ${esc(r.pin_off)}`
+      : `GPIO ${esc(r.pin)}`;
+    const live = pulsing && r.output_pin ? ` · active GPIO ${esc(r.output_pin)}` : "";
     const meta = r.enabled
-      ? `${esc(EQ_LABEL[eq]||eq)} · ${esc(r.zone||"")} · ${esc(r.mode)} · ${windows}`
-      : "disabled";
+      ? `${esc(EQ_LABEL[eq]||eq)} · ${gpio} · ${esc(r.zone||"")} · ${esc(r.mode)} · ${windows}${live}`
+      : r.pin ? `disabled · ${gpio}${live}` : "disabled";
     const pulse = r.pulse_mode
       ? `<div class="pulsebox"><span class="small-note">pulse</span>
            <input type="number" class="pulse-ms" data-pulse-id="${r.id}" min="20" max="10000" step="50" value="${r.pulse_on_ms||600}"> ms
          </div>
          <div class="btnrow">
-           <button class="action small" data-relay="${r.id}" data-mode="on" data-pulse="1">Pulse ON</button>
-           <button class="action small danger" data-relay="${r.id}" data-mode="off" data-pulse="1">Pulse OFF</button>
+            <button class="action small" data-relay="${r.id}" data-mode="on" data-pulse="1">Pulse ${contactor ? "START" : "ON"}</button>
+            <button class="action small danger" data-relay="${r.id}" data-mode="off" data-pulse="1">Pulse ${contactor ? "STOP" : "OFF"}</button>
          </div>`
       : `<div class="btnrow">
            <button class="action small" data-relay="${r.id}" data-mode="auto">Auto</button>
@@ -1099,7 +1206,7 @@ function recChannels(rs){
 
 function renderRecurring(){
   if(!config) return;
-  const info = PROFILE_INFO[(config.device&&config.device.profile)||"agri"] || PROFILE_INFO.agri;
+  const info = profileInfo();
   $("#rec-hint").textContent = info.hint + " A recurring schedule is evaluated alongside the daily windows.";
   const list = config.recurring || [];
   const host = $("#recurring");
@@ -1129,13 +1236,293 @@ function renderRecurring(){
   recurringRendered = true;
 }
 
+/* ---------------- Profiles: pin map + on/off timing ---------------- */
+const DEFAULT_RELAY_PINS = [13,14,16,17,18,19,21,22,23,25,26,27];
+const copyJson = (o) => JSON.parse(JSON.stringify(o));
+function slugId(s){
+  return String(s||"").toLowerCase().trim().replace(/[^a-z0-9_-]+/g,"-").replace(/^-+|-+$/g,"").slice(0,23);
+}
+function pinOptions(selected){
+  return GPIO_PINS.map(p=>`<option value="${p}" ${Number(selected)===p?"selected":""}>GPIO ${p}</option>`).join("");
+}
+function defaultProfiles(){
+  const chans = config && Array.isArray(config.channels) ? config.channels : [];
+  const pins = config && config.pins ? copyJson(config.pins) : {relays:copyJson(DEFAULT_RELAY_PINS), pump:33};
+  pins.relays = pins.relays || copyJson(DEFAULT_RELAY_PINS);
+  while(pins.relays.length < 12) pins.relays.push(DEFAULT_RELAY_PINS[pins.relays.length]);
+  return Object.keys(PROFILE_INFO).map(id=>{
+    const unit = PROFILE_INFO[id].unit;
+    const name = id[0].toUpperCase() + id.slice(1);
+    return {
+      id, name, unit, pins:copyJson(pins),
+      channels: chans.map((ch,i)=>({
+        id:i+1,
+        name:(PROFILE_SAMPLES[id]||[])[i] || ch.name || `Relay ${i+1}`,
+        zone:id === "agri" ? (ch.zone||`${unit} ${i+1}`) : `${unit} ${i+1}`,
+        equipment:id === "agri" ? (ch.equipment||"other") : "other",
+        enabled:id === "agri" ? !!ch.enabled : false,
+        days:id === "agri" ? (ch.days||0) : 0,
+        pulse_mode:!!ch.pulse_mode,
+        pulse_on_ms:Number(ch.pulse_on_ms)||600,
+        pulse_off_ms:Number(ch.pulse_off_ms)||600,
+        on:(ch.windows && ch.windows[0] && ch.windows[0].on) || "",
+        off:(ch.windows && ch.windows[0] && ch.windows[0].off) || ""
+      }))
+    };
+  });
+}
+function newProfileChannel(i){
+  return {id:i+1, name:`Relay ${i+1}`, zone:"", equipment:"other", enabled:false, days:0,
+    pulse_mode:false, pulse_on_ms:600, pulse_off_ms:600, on:"06:00", off:"07:00"};
+}
+function normalizeProfile(p){
+  const base = {id:"profile", name:"Profile", unit:"Zone",
+    pins:{relays:copyJson(DEFAULT_RELAY_PINS),relays_off:copyJson(DEFAULT_RELAY_PINS),pump:33}, channels:[]};
+  const out = Object.assign(base, p || {});
+  out.id = slugId(out.id) || "profile";
+  out.relay_count = Math.max(1, Math.min(12, Number(out.relay_count) ||
+    (Array.isArray(out.channels) ? out.channels.length : 1) || 1));
+  out.pins = out.pins || {};
+  out.pins.relays = Array.isArray(out.pins.relays) ? out.pins.relays.slice(0,out.relay_count) : copyJson(DEFAULT_RELAY_PINS);
+  while(out.pins.relays.length < out.relay_count) out.pins.relays.push(DEFAULT_RELAY_PINS[out.pins.relays.length]);
+  out.pins.relays_off = Array.isArray(out.pins.relays_off) ? out.pins.relays_off.slice(0,out.relay_count) : copyJson(out.pins.relays);
+  while(out.pins.relays_off.length < out.relay_count) out.pins.relays_off.push(out.pins.relays[out.pins.relays_off.length]);
+  out.pins.pump = Number(out.pins.pump)||33;
+  out.channels = Array.isArray(out.channels) ? out.channels.slice(0,out.relay_count) : [];
+  while(out.channels.length < out.relay_count) out.channels.push(newProfileChannel(out.channels.length));
+  out.channels = out.channels.map((ch,i)=>Object.assign(newProfileChannel(i), ch, {id:i+1}));
+  return out;
+}
+function ensureProfiles(){
+  if(!config) return [];
+  const list = Array.isArray(config.profiles) && config.profiles.length ? config.profiles : null;
+  if(list){ config.profiles = list.map(normalizeProfile); return config.profiles; }
+  let cached = null;
+  try{ cached = JSON.parse(localStorage.getItem(PROFILE_STORE_KEY) || "null"); }catch(_){ }
+  config.profiles = (Array.isArray(cached) && cached.length ? cached : defaultProfiles()).map(normalizeProfile);
+  return config.profiles;
+}
+function renderProfiles(){
+  if(!config || $("#tab-profiles").hidden) return;
+  const focused = document.activeElement;
+  if(focused && /^(INPUT|SELECT|TEXTAREA)$/.test(focused.tagName) && $("#tab-profiles").contains(focused)) return;
+  const list = ensureProfiles();
+  const sel = $("#profile-select");
+  const activeId = profileSelectedId || sel.value || (config.device && config.device.profile) || list[0].id;
+  sel.innerHTML = list.map(p=>`<option value="${esc(p.id)}">${esc(p.name||p.id)}</option>`).join("");
+  sel.value = list.some(p=>p.id===activeId) ? activeId : list[0].id;
+  profileSelectedId = sel.value;
+  const p = list.find(x=>x.id===sel.value) || list[0];
+  $("#prof-id").value = p.id;
+  $("#prof-name").value = p.name || p.id;
+  $("#prof-unit").value = p.unit || "Zone";
+  $("#prof-pump-pin").innerHTML = pinOptions(p.pins.pump);
+  $("#profile-kind").textContent = Object.prototype.hasOwnProperty.call(PROFILE_INFO,p.id) ? "built-in" : "custom";
+  const stops = p.channels.map((ch,i)=>({ch,i})).filter(x=>x.ch.equipment==="motor" && x.ch.pulse_mode &&
+    p.pins.relays_off[x.i] !== p.pins.relays[x.i]).map(x=>`R${x.i+1}:${p.pins.relays_off[x.i]}`);
+  $("#prof-summary").textContent = `${p.relay_count} relay${p.relay_count===1?"":"s"} · GPIO ${p.pins.relays.join(", ")}` +
+    (stops.length ? ` · STOP ${stops.join(", ")}` : "") + ` · pump GPIO ${p.pins.pump}`;
+  $("#profile-relays").innerHTML = p.channels.map((ch,i)=>`
+    <div class="sched-row prof-row ${ch.equipment==="motor" && ch.pulse_mode ? "contactor" : ""}" data-prof-ch="${i}">
+      <div class="sched-head">
+        <span class="rnum">${i+1}</span>
+        <span class="small-note">GPIO</span><select class="prof-pin">${pinOptions(p.pins.relays[i])}</select>
+        <input class="name wide" value="${esc(ch.name)}" maxlength="23" placeholder="Equipment name">
+        <select class="equipment">${equipmentOptions(ch.equipment||"other")}</select>
+        <input class="zone" value="${esc(ch.zone||"")}" maxlength="23" placeholder="${esc(p.unit||"Zone")}">
+        <label class="row"><input type="checkbox" class="enabled" ${ch.enabled?"checked":""}> enabled</label>
+        <label class="row"><input type="checkbox" class="pulse_mode" ${ch.pulse_mode?"checked":""}> pulse</label>
+        <button type="button" class="action small danger relay-del" data-del="${i}" title="Delete relay ${i+1}">×</button>
+      </div>
+      <div class="row prof-stop" style="margin-top:9px">
+        <span class="small-note">contactor: START GPIO ${p.pins.relays[i]} ·</span>
+        <span class="small-note">STOP GPIO</span><select class="prof-pin-off">${pinOptions(p.pins.relays_off[i])}</select>
+        <span class="small-note">(ON time pulses START, OFF time pulses STOP)</span>
+      </div>
+      <div class="row" style="margin-top:9px">
+        <span class="small-note">ON</span><input class="on time" type="time" value="${esc(ch.on||"06:00")}">
+        <span class="small-note">OFF</span><input class="off time" type="time" value="${esc(ch.off||"07:00")}">
+        <span class="small-note">pulse ON</span><input class="pulse_on_ms" type="number" min="20" max="10000" step="50" value="${ch.pulse_on_ms||600}">
+        <span class="small-note">ms · pulse OFF</span><input class="pulse_off_ms" type="number" min="20" max="10000" step="50" value="${ch.pulse_off_ms||600}">
+        <span class="small-note">ms</span>
+      </div>
+      <div class="days">${dayChecks(ch.days||0,"day")}</div>
+    </div>`).join("");
+}
+function syncContactorRow(row){
+  if(!row) return;
+  const contactor = $(".equipment",row).value === "motor" && $(".pulse_mode",row).checked;
+  row.classList.toggle("contactor", contactor);
+  if(!contactor) return;
+  const off = $(".prof-pin-off", row);
+  const onPin = Number($(".prof-pin",row).value);
+  if(Number(off.value) !== onPin) return;
+  const used = new Set([Number($("#prof-pump-pin").value)]);
+  $$("#profile-relays [data-prof-ch]").forEach(r=>{
+    used.add(Number($(".prof-pin",r).value));
+    if(r !== row && r.classList.contains("contactor")) used.add(Number($(".prof-pin-off",r).value));
+  });
+  const free = GPIO_PINS.find(p=>!used.has(p));
+  if(free) off.value = free;
+}
+function collectProfile(){
+  const id = slugId($("#prof-id").value);
+  if(!id) throw new Error("Enter a profile ID");
+  const name = $("#prof-name").value.trim() || id;
+  const unit = $("#prof-unit").value.trim() || "Zone";
+  const pumpPin = Number($("#prof-pump-pin").value);
+  const channels = $$("#profile-relays [data-prof-ch]").map(row=>{
+    const pin = Number($(".prof-pin",row).value);
+    const contactor = $(".equipment",row).value === "motor" && $(".pulse_mode",row).checked;
+    const offSelect = $(".prof-pin-off",row);
+    return {
+    id:Number(row.dataset.profCh)+1,
+    pin,
+    pin_off: contactor ? Number(offSelect.value) : pin,
+    name:$(".name",row).value.trim() || `Relay ${Number(row.dataset.profCh)+1}`,
+    zone:$(".zone",row).value.trim(),
+    equipment:$(".equipment",row).value,
+    enabled:$(".enabled",row).checked,
+    days:readDays(row),
+    pulse_mode:$(".pulse_mode",row).checked,
+    pulse_on_ms:Number($(".pulse_on_ms",row).value)||600,
+    pulse_off_ms:Number($(".pulse_off_ms",row).value)||600,
+    on:$(".on",row).value,
+    off:$(".off",row).value
+    };
+  });
+  const used = channels.map(c=>c.pin).concat([pumpPin]);
+  if(new Set(used).size !== used.length) throw new Error("Each relay and the pump need a unique GPIO");
+  const stops = channels.filter(c=>c.pin_off !== c.pin).map(c=>c.pin_off);
+  if(new Set(stops).size !== stops.length || stops.some(p=>used.includes(p)))
+    throw new Error("Each motor contactor STOP GPIO must be unique and not shared");
+  return {id,name,unit,relay_count:channels.length,
+    pins:{relays:channels.map(c=>c.pin),relays_off:channels.map(c=>c.pin_off),pump:pumpPin},channels};
+}
+async function profileRelayAdd(){
+  try{
+    const p = collectProfile();
+    if(p.relay_count >= 12) throw new Error("A profile supports at most 12 relays");
+    const used = p.pins.relays.concat(p.pins.relays_off, [p.pins.pump]);
+    const pin = GPIO_PINS.find(x=>!used.includes(x));
+    if(pin === undefined) throw new Error("No free GPIO available");
+    p.relay_count++;
+    p.channels.push(newProfileChannel(p.relay_count - 1));
+    p.pins.relays.push(pin);
+    p.pins.relays_off.push(pin);
+    const list = ensureProfiles().map(x=>x.id===p.id ? p : x);
+    await saveProfiles(list, `Relay ${p.relay_count} added.`);
+    renderProfiles();
+  }catch(e){ toast("Add relay failed: " + e.message, 5000); }
+}
+async function profileRelayDelete(index){
+  try{
+    const p = collectProfile();
+    if(p.relay_count <= 1) throw new Error("Keep at least one relay");
+    const removed = p.channels[index];
+    p.channels.splice(index,1);
+    p.pins.relays.splice(index,1);
+    p.pins.relays_off.splice(index,1);
+    p.relay_count--;
+    p.channels.forEach((ch,i)=>ch.id=i+1);
+    const list = ensureProfiles().map(x=>x.id===p.id ? p : x);
+    await saveProfiles(list, `${removed.name} deleted.`);
+    renderProfiles();
+  }catch(e){ toast("Delete relay failed: " + e.message, 5000); }
+}
+async function saveProfiles(list, msg="Profile saved.", quiet=false){
+  config.profiles = list.map(normalizeProfile);
+  try{ localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(config.profiles)); }catch(_){ }
+  if(await controllerIsSimulator()){
+    try{
+      await post("/api/profiles", {profiles:config.profiles});
+    }catch(e){
+      if(!/404|not found/i.test(e.message)) throw e;
+      if(!quiet) toast("Profile saved in this browser (controller keeps only the active profile)", 5000);
+    }
+  }else if(!quiet){
+    toast("Profile saved in this browser (controller keeps only the active profile)", 5000);
+  }
+  if(msg && !quiet) toast(msg);
+}
+async function profileSave(){
+  try{
+    const p = collectProfile();
+    const list = ensureProfiles().map(x=>x.id===p.id ? p : x);
+    await saveProfiles(list, `${p.name} saved.`);
+    profileSelectedId = p.id;
+    renderProfiles();
+  }catch(e){ toast("Profile save failed: " + e.message, 5000); }
+}
+async function profileNew(copy){
+  try{
+    const base = collectProfile();
+    const suggested = prompt(copy ? "Name for the duplicated profile" : "Name for the new profile",
+      copy ? `${base.name} copy` : "New profile");
+    if(!suggested) return;
+    const id = slugId(suggested);
+    if(!id) throw new Error("Invalid profile name");
+    const list = ensureProfiles();
+    if(list.some(p=>p.id===id)) throw new Error(`Profile ID '${id}' already exists`);
+    const np = copyJson(base);
+    np.id = id; np.name = suggested.trim();
+    if(!copy){
+      const used = np.pins.relays.concat(np.pins.relays_off, [np.pins.pump]);
+      const first = GPIO_PINS.find(p=>!used.includes(p)) || DEFAULT_RELAY_PINS[0];
+      np.relay_count = 1;
+      np.channels = [newProfileChannel(0)];
+      np.pins.relays = [first];
+      np.pins.relays_off = [first];
+    }
+    list.push(np);
+    await saveProfiles(list, `${np.name} created.`);
+    profileSelectedId = id;
+    renderProfiles();
+  }catch(e){ toast("Profile create failed: " + e.message, 5000); }
+}
+async function profileDelete(){
+  try{
+    const p = collectProfile();
+    const list = ensureProfiles();
+    if(list.length <= 1) throw new Error("Keep at least one profile");
+    if(config.device && config.device.profile === p.id) throw new Error("Apply another profile before deleting the active one");
+    if(!confirm(`Delete profile '${p.name}'?`)) return;
+    await saveProfiles(list.filter(x=>x.id!==p.id), `${p.name} deleted.`);
+    profileSelectedId = list[0].id === p.id ? null : list[0].id;
+    renderProfiles();
+  }catch(e){ toast("Profile delete failed: " + e.message, 5000); }
+}
+async function profileApply(){
+  try{
+    const p = collectProfile();
+    const list = ensureProfiles().map(x=>x.id===p.id ? p : x);
+    await saveProfiles(list, null, true);
+    const channels = p.channels.map((ch,i)=>({
+      id:i+1, name:ch.name, zone:ch.zone, equipment:ch.equipment,
+      pin:ch.pin, pin_off:ch.pin_off, pulse_mode:ch.pulse_mode, pulse_on_ms:ch.pulse_on_ms,
+      pulse_off_ms:ch.pulse_off_ms, enabled:ch.enabled, days:ch.days, mode:"auto",
+      windows: ch.on && ch.off ? [{on:ch.on,off:ch.off}] : []
+    }));
+    await post("/api/config", {device:{profile:p.id}, relay_count:p.relay_count, pins:p.pins, channels});
+    profileSelectedId = p.id;
+    config = null;
+    await loadConfig();
+    toast(`${p.name} applied to the controller.`, 5000);
+  }catch(e){ toast("Profile apply failed: " + e.message, 5000); }
+}
+
 function fillSettings(){
   if(!config) return;
   const d = config.device||{}, w = config.wifi||{}, p = config.pump||{}, s = config.safety||{}, co = config.coap||{};
   $("#set-name").value = d.name||"";
   $("#set-heading").value = d.heading||"";
   $("#set-subheading").value = d.subheading||"";
-  $("#set-profile").value = d.profile||"agri";
+  const profileSel = $("#set-profile");
+  const appliedId = d.profile||"agri";
+  if(appliedId && !$$("option", profileSel).some(o=>o.value===appliedId)){
+    profileSel.add(new Option(appliedId, appliedId));
+  }
+  profileSel.value = appliedId;
   $("#set-tz").value = d.timezone||"IST-5:30";
   $("#set-host").value = w.hostname||"mraf";
   $("#set-user").value = d.auth_user||"admin";
@@ -1301,20 +1688,24 @@ async function loadConfig(){
     applyBranding();
     if(!$("#tab-sched").hidden) renderSchedules();
     if(!$("#tab-rec").hidden) renderRecurring();
+    if(!$("#tab-profiles").hidden) renderProfiles();
     fillSettings();
     renderDash();
   }catch(e){ toast("Config: " + e.message); }
 }
 
 async function loadStatus(){
+  if(wifiScanBusy) return;   // keep the radio clear while a Wi-Fi scan runs
   try{
     status = await api("/api/status");
+    isSimulator = !!status.simulator;
     if(!config) await loadConfig();
     $("#sim-panel").hidden = !status.simulator;
     if(status.simulator) syncSimControls();
     renderDash();
     if(!$("#tab-sched").hidden && !schedulesRendered) renderSchedules();
     if(!$("#tab-rec").hidden && !recurringRendered) renderRecurring();
+    if(!$("#tab-profiles").hidden) renderProfiles();
   }catch(e){
     $("#conn").textContent = "offline";
     $("#conn").className = "pill bad";
@@ -1431,6 +1822,14 @@ document.addEventListener("click", async (ev)=>{
     return;
   }
   if(ev.target.id === "refresh-tunnel"){ loadStatus().then(renderTunnel); return; }
+  if(ev.target.id === "profile-save"){ profileSave(); return; }
+  if(ev.target.id === "profile-new"){ profileNew(false); return; }
+  if(ev.target.id === "profile-relay-add"){ profileRelayAdd(); return; }
+  const del = ev.target.closest("#profile-relays .relay-del");
+  if(del){ profileRelayDelete(Number(del.dataset.del)); return; }
+  if(ev.target.id === "profile-copy"){ profileNew(true); return; }
+  if(ev.target.id === "profile-delete"){ profileDelete(); return; }
+  if(ev.target.id === "profile-apply"){ profileApply(); return; }
   if(ev.target.id === "save-config" || ev.target.id === "save-settings" || ev.target.id === "save-rec"){ saveConfig(); return; }
   if(ev.target.id === "add-rec"){
     if(!config) return;
@@ -1459,13 +1858,31 @@ document.addEventListener("click", async (ev)=>{
     ev.target.closest(".win").remove();
     return;
   }
+  if(ev.target.id === "run-selftest"){
+    runSelfTest();
+    return;
+  }
   if(ev.target.id === "scan-wifi"){
+    if(wifiScanBusy) return;
+    const btn = ev.target;
+    const oldLabel = btn.textContent;
+    wifiScanBusy = true;
+    btn.disabled = true;
+    btn.textContent = "Scanning…";
     try{
       const d = await api("/api/wifi/scan");
+      const nets = d.networks || [];
       const list = $("#ssid-list");
-      list.innerHTML = (d.networks||[]).map(n=>`<option value="${esc(n.ssid)}">${esc(n.ssid)} ${n.secure?"(locked)":"(open)"}</option>`).join("");
-      toast(`Found ${(d.networks||[]).length} networks`);
+      list.innerHTML = nets.map(n=>`<option value="${esc(n.ssid)}">${esc(n.ssid)} ${n.secure?"(locked)":"(open)"}${n.rssi!=null?" "+n.rssi+" dBm":""}</option>`).join("");
+      if(d.error) toast("Scan: " + d.error, 6000);
+      else if(!nets.length) toast("No networks found. The radio scans 2.4 GHz only and may be busy connecting.", 6000);
+      else toast(`Found ${nets.length} networks`);
     }catch(e){ toast(e.message); }
+    finally{
+      wifiScanBusy = false;
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
     return;
   }
   if(ev.target.id === "apply-time"){
@@ -1497,10 +1914,14 @@ document.addEventListener("change", async (ev)=>{
     }
     return;
   }
+  if(ev.target.id === "profile-select"){ profileSelectedId = ev.target.value; renderProfiles(); return; }
+  if(ev.target.matches("#profile-relays .equipment, #profile-relays .pulse_mode")){
+    syncContactorRow(ev.target.closest("[data-prof-ch]")); return;
+  }
   if(ev.target.id === "set-profile"){
     const p = ev.target.value;
-    $("#rec-hint").textContent = (PROFILE_INFO[p]||PROFILE_INFO.agri).hint;
     if(config && config.device) config.device.profile = p;
+    $("#rec-hint").textContent = profileInfo().hint;
     schedulesRendered = false;
     if(!$("#tab-sched").hidden) renderSchedules();
     return;
