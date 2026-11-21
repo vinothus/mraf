@@ -364,6 +364,10 @@ curl -u admin:farm1234 -H 'Content-Type: application/json' \
 Epoch must be at least 1700000000. The RTC is updated when present. The
 response is the full status object plus `"ok": true`.
 
+In the dashboard, **Settings → Time & maintenance** accepts device-local wall
+time. The browser converts it to epoch using the configured POSIX timezone, so
+with `IST-5:30` (UTC+05:30), entering `10:30 AM` sends `05:00 UTC`.
+
 ## GET /api/events
 
 Returns up to 48 stored events; the status object includes the last 30.

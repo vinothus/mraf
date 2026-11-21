@@ -430,8 +430,9 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
       </div>
       <div class="card">
         <h3>Time &amp; maintenance</h3>
-        <div class="field"><label>Set controller time (local)</label><input id="set-time" type="datetime-local"></div>
-        <div class="btnrow"><button class="action" id="apply-time">Set time</button></div>
+        <div class="field"><label>Set controller time (device local time)</label><input id="set-time" type="datetime-local"></div>
+        <div class="btnrow"><button class="action" id="apply-time">Set time</button><button class="action" id="fill-time-now">Use PC time</button></div>
+        <div class="hint" id="tz-note">Time is interpreted as device local time (IST-5:30 = UTC+05:30), not browser time.</div>
         <div class="hint" id="rtc-note">A DS3231 keeps time through power cuts. NTP corrects it when Wi-Fi is available.</div>
         <hr style="border-color:var(--line);margin:16px 0">
         <div class="btnrow"><button class="action danger" id="reboot">Reboot controller</button></div>
@@ -547,6 +548,7 @@ const PROFILE_SAMPLES = {
 let status = null;
 let isSimulator = null;
 let config = null;
+let timeInputTouched = false;
 let profileSelectedId = null;
 let schedulesRendered = false;
 let recurringRendered = false;
@@ -566,6 +568,48 @@ const fmtMin = (sec) => {
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
   return h ? `${h}h ${m}m` : `${m}m`;
 };
+const deviceTimezone = () => ((config && config.device && config.device.timezone) || "IST-5:30").trim();
+function tzOffsetMinutes(tz){
+  const m = /^([A-Za-z]{3,6})([+-])(\d{1,2})(?::?(\d{2}))?$/.exec((tz||"").trim());
+  if(!m) return 0;
+  const magnitude = Number(m[3])*60 + Number(m[4]||0);
+  const posix = (m[2] === "+" ? 1 : -1) * magnitude;
+  return -posix;
+}
+function deviceLocalInput(epochSec){
+  const off = tzOffsetMinutes(deviceTimezone())*60000;
+  return new Date(Number(epochSec)*1000 + off).toISOString().slice(0,16);
+}
+function localInputToEpoch(value){
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value||"");
+  if(!m) return NaN;
+  const utcMs = Date.UTC(Number(m[1]), Number(m[2])-1, Number(m[3]), Number(m[4]), Number(m[5]));
+  return Math.floor(utcMs/1000) - tzOffsetMinutes(deviceTimezone())*60;
+}
+function deviceClockParts(value){
+  const m = /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(value||""));
+  return m ? {date:`${m[1]}-${m[2]}-${m[3]}`, time:`${m[4]}:${m[5]}`, sec:m[6]||"00", hour:Number(m[4])} : null;
+}
+function fmtDeviceClock(value){
+  const p = deviceClockParts(value);
+  if(!p) return "Synced";
+  const suffix = p.hour >= 12 ? "PM" : "AM";
+  const h12 = (p.hour % 12) || 12;
+  return `${h12}:${p.time.split(":")[1]}:${p.sec} ${suffix}`;
+}
+function fmtUtcOffset(tz){
+  const off = tzOffsetMinutes(tz);
+  const sign = off >= 0 ? "+" : "-";
+  const abs = Math.abs(off), h = Math.floor(abs/60), m = abs%60;
+  return `UTC${sign}${h}${m ? ":"+String(m).padStart(2,"0") : ""}`;
+}
+function deviceInputFromStatus(){
+  if(status && status.now_local){
+    const p = deviceClockParts(status.now_local);
+    if(p) return `${p.date}T${p.time}`;
+  }
+  return status && status.now ? deviceLocalInput(status.now) : "";
+}
 const activeProfile = () => (config && config.profiles || []).find(p => p.id === ((config && config.device && config.device.profile) || "agri"));
 const profileInfo = () => {
   const custom = activeProfile();
@@ -1075,9 +1119,17 @@ function renderDash(){
     ? `${rem.host || "--"}:${rem.port || 5683} · every ${rem.interval_sec||60}s${rem.last_error ? " · "+rem.last_error : ""}`
     : "set in Settings";
 
-  $("#stat-time").textContent = status.time_valid ? "Synced" : "NOT SET";
+  const clock = deviceClockParts(status.now_local);
+  $("#stat-time").textContent = status.time_valid ? (clock ? fmtDeviceClock(status.now_local) : "Synced") : "NOT SET";
   $("#stat-time").style.color = status.time_valid ? "var(--accent)" : "var(--danger)";
-  $("#stat-time-sub").textContent = status.time_valid ? `uptime ${fmtMin(status.uptime_sec)}` : "set time or connect Wi-Fi/NTP";
+  $("#stat-time-sub").textContent = status.time_valid
+    ? `${clock ? clock.date+" · " : ""}uptime ${fmtMin(status.uptime_sec)}`
+    : "set time or connect Wi-Fi/NTP";
+  const timeInput = $("#set-time");
+  if(timeInput && !timeInputTouched && document.activeElement !== timeInput){
+    const deviceNow = deviceInputFromStatus();
+    if(deviceNow) timeInput.value = deviceNow;
+  }
   $("#stat-active").textContent = `${active} / 12`;
 
   $("#pump-name").textContent = pump.name || "5HP Pump";
@@ -1523,7 +1575,10 @@ function fillSettings(){
     profileSel.add(new Option(appliedId, appliedId));
   }
   profileSel.value = appliedId;
-  $("#set-tz").value = d.timezone||"IST-5:30";
+  const tz = (d.timezone||"IST-5:30").trim();
+  $("#set-tz").value = tz;
+  const tzNote = $("#tz-note");
+  if(tzNote) tzNote.textContent = `Entered time is interpreted as ${fmtUtcOffset(tz)} (device timezone ${tz}), not browser time. Example: 10:30 AM means 10:30 ${fmtUtcOffset(tz)}.`;
   $("#set-host").value = w.hostname||"mraf";
   $("#set-user").value = d.auth_user||"admin";
   $("#set-device-id").value = d.device_id||"";
@@ -1672,6 +1727,7 @@ async function saveConfig(){
     schedulesRendered = false;
     recurringRendered = false;
     config = null;
+    timeInputTouched = false;
     await loadConfig();
     if(out.reboot_required){
       toast("Saved. Rebooting to apply Wi-Fi/security changes...", 6000);
@@ -1885,11 +1941,23 @@ document.addEventListener("click", async (ev)=>{
     }
     return;
   }
+  if(ev.target.id === "fill-time-now"){
+    $("#set-time").value = deviceLocalInput(Math.floor(Date.now()/1000));
+    timeInputTouched = true;
+    toast("Filled from this computer");
+    return;
+  }
   if(ev.target.id === "apply-time"){
     const v = $("#set-time").value;
     if(!v){ toast("Pick a date/time"); return; }
-    const epoch = Math.floor(new Date(v).getTime()/1000);
-    try{ status = await post("/api/time", {epoch}); renderDash(); toast("Time set"); }
+    const epoch = localInputToEpoch(v);
+    if(!Number.isFinite(epoch) || epoch < 1700000000){ toast("Invalid date/time"); return; }
+    try{
+      status = await post("/api/time", {epoch});
+      timeInputTouched = false;
+      renderDash();
+      toast(`Time set to ${fmtDeviceClock(status && status.now_local || v)}`);
+    }
     catch(e){ toast(e.message); }
     return;
   }
@@ -1939,6 +2007,7 @@ document.addEventListener("change", async (ev)=>{
 
 $("#sim-current").addEventListener("input", (ev)=>{ $("#sim-current-val").textContent = ev.target.value + " A"; });
 document.addEventListener("input", (ev)=>{
+  if(ev.target.id === "set-time") timeInputTouched = true;
   if(ev.target.id === "sim-current" && !$("#sim-current-auto").checked){
     clearTimeout(window._curT);
     window._curT = setTimeout(()=>postSim("/api/sim/current", {amps:Number(ev.target.value)}), 250);
