@@ -27,12 +27,20 @@ static void addParam(JsonArray tools, const char *prop, const char *type,
                      const char *desc, bool required)
 {
     JsonObject t = tools[tools.size() - 1];
-    JsonObject props = t["inputSchema"]["properties"].to<JsonObject>();
+    JsonObject schema = t["inputSchema"].as<JsonObject>();
+    JsonObject props = schema["properties"].as<JsonObject>();
+    if (!props) {
+        props = schema["properties"].to<JsonObject>();
+    }
     JsonObject p = props[prop].to<JsonObject>();
     p["type"] = type;
     p["description"] = desc;
     if (required) {
-        t["inputSchema"]["required"].to<JsonArray>().add(prop);
+        JsonArray req = schema["required"].as<JsonArray>();
+        if (!req) {
+            req = schema["required"].to<JsonArray>();
+        }
+        req.add(prop);
     }
 }
 

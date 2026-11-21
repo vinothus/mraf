@@ -200,7 +200,7 @@ the system heap. The default build leaves 36,520 B free; enabling
 (`_end 0x3ffdef18`). That margin is only possible because the firmware sizes
 its static buffers to the real payloads:
 
-- HTTP response 8 KiB, request body 4 KiB, persisted settings JSON 4 KiB
+- HTTP response 16 KiB, request body 4 KiB, persisted settings JSON 4 KiB
 - signalling HTTP buffers 2 × 5 KiB, request mailbox 4 KiB, SDP answer 1 KiB
 - data-channel replies are serialized directly into the peer tx buffer
   (`mraf_peer_tx_begin`/`mraf_peer_tx_end`), avoiding a second 8 KiB buffer

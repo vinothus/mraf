@@ -21,9 +21,14 @@ AUTH = "Basic " + base64.b64encode(b"admin:farm1234").decode()
 class Server:
     def __init__(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="mraf-e2e-")
+        self.log = None
+        self.proc = None
+        self.start()
+
+    def start(self):
         env = os.environ.copy()
         env["MRAF_HTTP_PORT"] = str(PORT)
-        self.log = open(Path(self.tmp.name) / "firmware.log", "wb")
+        self.log = open(Path(self.tmp.name) / "firmware.log", "ab")
         self.proc = subprocess.Popen(
             [str(BINARY)],
             cwd=self.tmp.name,
@@ -46,7 +51,7 @@ class Server:
             time.sleep(0.2)
         raise TimeoutError(f"firmware did not listen on {BASE}")
 
-    def stop(self):
+    def stop(self, cleanup=True):
         if self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -60,7 +65,13 @@ class Server:
             tail = log_path.read_text(errors="replace")[-4000:]
             if tail.strip():
                 print("\n--- firmware log tail ---\n" + tail)
-        self.tmp.cleanup()
+        if cleanup:
+            self.tmp.cleanup()
+
+    def restart(self):
+        self.stop(cleanup=False)
+        self.start()
+        self.wait_ready()
 
 
 def request(path, method="GET", body=None, auth=True):
@@ -116,6 +127,10 @@ class ZephyrE2ETests(unittest.TestCase):
         self.assertIn("pump", doc)
         self.assertIn("wifi", doc)
         self.assertEqual(len(doc["relays"]), 12)
+        for relay in doc["relays"]:
+            self.assertIn("pin", relay)
+            self.assertIn("pin_off", relay)
+            self.assertIn("output_pin", relay)
 
     def test_02a_selftest_requires_auth(self):
         status, _, _ = request("/api/selftest", "POST", {}, auth=False)
@@ -142,6 +157,7 @@ class ZephyrE2ETests(unittest.TestCase):
         self.assertIn("<title>நீர்காவலன்".encode("utf-8"), payload)
         self.assertIn(b'id="theme-toggle"', payload)
         self.assertIn(b'html[data-theme="light"]', payload)
+        self.assertIn(b"delete cfg.profiles;", payload)
 
     def test_04_config_roundtrip(self):
         status, config = request_json("/api/config")
@@ -308,9 +324,17 @@ class ZephyrE2ETests(unittest.TestCase):
             "/mcp", method="POST",
             body={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         self.assertEqual(status, 200)
-        names = [t["name"] for t in doc["result"]["tools"]]
+        tools = doc["result"]["tools"]
+        names = [t["name"] for t in tools]
         self.assertIn("get_status", names)
         self.assertIn("chat", names)
+        relay = next(t for t in tools if t["name"] == "control_relay")
+        props = relay["inputSchema"]["properties"]
+        self.assertIn("relay_id", props)
+        self.assertIn("mode", props)
+        self.assertIn("pulse_ms", props)
+        self.assertIn("relay_id", relay["inputSchema"]["required"])
+        self.assertIn("mode", relay["inputSchema"]["required"])
 
         status, doc = request_json(
             "/mcp", method="POST",
@@ -326,6 +350,21 @@ class ZephyrE2ETests(unittest.TestCase):
             body={"jsonrpc": "2.0", "method": "notifications/initialized"})
         self.assertEqual(status, 202)
         self.assertEqual(payload, b"")
+
+    def test_99_time_survives_restart(self):
+        epoch = 1900000000
+        status, doc = request_json(
+            "/api/time", method="POST", body={"epoch": epoch})
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(doc["now"], epoch)
+
+        self.server.restart()
+
+        status, doc = request_json("/api/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(doc["time_valid"])
+        self.assertGreaterEqual(doc["now"], epoch)
+        self.assertLess(doc["now"], epoch + 120)
 
 
 if __name__ == "__main__":

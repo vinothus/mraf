@@ -36,6 +36,10 @@ Software commands take effect on the next controller tick (about 1 s).
 - **Off**: force the load off. The pump records the stop time for minimum-off.
 - **Boost**: temporarily runs a load in Auto mode for N minutes, capped by
   `max_boost_min` (default 180).
+- **USB-only power**: set `safety.assume_mains_present` to `true` in
+  `Settings` when the controller has no mains-sense feed. Schedules and manual
+  commands then operate without the outage gate; float/current/fault interlocks
+  remain active.
 
 ## Default schedules
 
@@ -128,7 +132,7 @@ Yearly:
 | Pump starts then trips | Overload setting, phase loss, low voltage, dry run, mechanical load |
 | Current reads zero while running | ACS712 supply, divider, GPIO39, zero calibration (boot with pump off) |
 | Current reads high at rest | ACS712 zero drifted; reboot with pump off; check divider |
-| Time wrong | NTP blocked, RTC missing/dead battery, timezone, manual time API |
+| Time wrong | NTP blocked, RTC missing/dead battery, timezone, manual time API, persistent epoch not restored |
 | Random reboots | 5 V supply, brownout during relay switching, USB/buck back-feed, loose ground |
 | Wi-Fi drops | Distance, antenna clearance, metal enclosure, set `WiFi.setSleep(false)` already enabled |
 | Config save fails | Validation error in the JSON; check the event/API error message |

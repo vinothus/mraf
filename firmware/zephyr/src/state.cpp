@@ -26,6 +26,11 @@ static int32_t g_speed_x1000 = 1000;
 static bool g_time_valid;
 static time_t g_last_control_tick;
 
+static bool mainsPresentForControl()
+{
+    return g_cfg.assume_mains_present || mraf_platform_mains_present();
+}
+
 void mraf_state_init(void)
 {
     k_mutex_init(&g_state_lock);
@@ -53,7 +58,7 @@ void mraf_tick_catchup(void)
     }
 
     k_mutex_lock(&g_state_lock, K_FOREVER);
-    bool power = mraf_platform_mains_present();
+    bool power = mainsPresentForControl();
     bool tank = mraf_platform_read_tank_full(g_cfg.pump.tank_full_active_low);
     bool sump = mraf_platform_read_sump_dry(g_cfg.pump.sump_dry_active_low);
     bool pump_on = g_ctrl.pump().on;
@@ -73,7 +78,7 @@ void mraf_tick_catchup(void)
 
 void mraf_apply_inputs_locked(time_t now)
 {
-    bool power = mraf_platform_mains_present();
+    bool power = mainsPresentForControl();
     bool tank = mraf_platform_read_tank_full(g_cfg.pump.tank_full_active_low);
     bool sump = mraf_platform_read_sump_dry(g_cfg.pump.sump_dry_active_low);
     bool pump_on = g_ctrl.pump().on;
@@ -224,6 +229,8 @@ void mraf_build_status(JsonDocument &doc)
 
     JsonObject pw = doc["power"].to<JsonObject>();
     pw["present"] = g_ctrl.powerPresent();
+    pw["sense"] = mraf_platform_mains_present();
+    pw["assumed"] = g_cfg.assume_mains_present;
     pw["battery_v"] = g_ctrl.batteryVoltage();
     pw["outage_sec"] = (uint32_t)g_ctrl.outageSeconds(now);
     pw["battery_backed"] = true;
@@ -237,8 +244,14 @@ void mraf_build_status(JsonDocument &doc)
     for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         const ChannelConfig &ch = g_ctrl.config().channels[i];
         const RelayRuntime &rt = g_ctrl.relay(i);
+        uint8_t pin = g_ctrl.config().relay_pins[i] ? g_ctrl.config().relay_pins[i] : RELAY_PINS[i];
+        uint8_t pinOff = g_ctrl.config().relay_off_pins[i] ? g_ctrl.config().relay_off_pins[i] : pin;
+        uint8_t outputPin = rt.pulsing ? rt.pulse_pin : (rt.output ? pin : 0);
         JsonObject o = relays.add<JsonObject>();
         o["id"] = i + 1;
+        o["pin"] = pin;
+        o["pin_off"] = pinOff;
+        o["output_pin"] = outputPin;
         o["name"] = ch.name;
         o["zone"] = ch.zone;
         o["equipment"] = equipmentName(ch.equipment);
@@ -350,18 +363,6 @@ void mraf_build_remote_data(JsonObject data, time_t now)
     JsonArray relays = data["relays"].to<JsonArray>();
     for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
         relays.add(g_ctrl.relay(i).on ? 1 : 0);
-    }
-
-    JsonArray equipment = data["equipment"].to<JsonArray>();
-    for (uint8_t i = 0; i < g_ctrl.channelCount(); i++) {
-        const ChannelConfig &ch = g_ctrl.config().channels[i];
-        JsonObject e = equipment.add<JsonObject>();
-        e["id"] = i + 1;
-        e["kind"] = equipmentName(ch.equipment);
-        e["zone"] = ch.zone;
-        e["on"] = g_ctrl.relay(i).on;
-        e["output"] = g_ctrl.relay(i).output;
-        e["pulsing"] = g_ctrl.relay(i).pulsing;
     }
 }
 

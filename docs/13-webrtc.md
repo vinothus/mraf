@@ -376,7 +376,7 @@ Everything else was trimmed to match the real payload sizes, not arbitrary
 round numbers:
 
 - system heap 36,864 B, main/HTTP-server stacks 6,144 B
-- HTTP response 8,192 B, request body 4,096 B, settings JSON 4,096 B
+- HTTP response 16,384 B, request body 4,096 B, settings JSON 4,096 B
 - remote poll body/response 3,072/5,120 B, remote stack 4,096 B
 - CoAP receive 3,072 B, MCP tool text 2,048 B, time-sync stack 3,072 B
 - data-channel reply is serialized **directly** into the peer tx buffer via

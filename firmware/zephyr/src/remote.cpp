@@ -28,7 +28,9 @@ static int64_t g_remoteLastPollMs;
 static time_t g_remoteLastPollAt;
 static int g_remoteLastCode;
 static bool g_remoteLastOk;
-static char g_remoteLastError[64];
+static size_t g_remoteLastBodyLen;
+static uint8_t g_remoteFailCount;
+static char g_remoteLastError[96];
 static char g_remoteStatus[16] = "off";
 static bool g_remoteConfirmed;
 
@@ -76,6 +78,8 @@ void mraf_remote_init(void)
     g_remoteLastPollAt = 0;
     g_remoteLastCode = 0;
     g_remoteLastOk = false;
+    g_remoteLastBodyLen = 0;
+    g_remoteFailCount = 0;
     if (g_cfg.coap_enabled) {
         copyRemoteText(g_remoteStatus, sizeof(g_remoteStatus), "waiting");
     }
@@ -101,6 +105,7 @@ void mraf_remote_build_status(JsonObject rem)
     rem["last_code"] = g_remoteLastCode;
     rem["last_ok"] = g_remoteLastOk;
     rem["last_error"] = g_remoteLastError;
+    rem["last_body_len"] = (uint32_t)g_remoteLastBodyLen;
     rem["last_poll"] = (uint32_t)g_remoteLastPollAt;
     rem["pending"] = mraf_remote_has_pending();
     rem["status"] = g_remoteStatus;
@@ -154,6 +159,19 @@ static void applyRemoteMeta(JsonObject res, time_t now)
         changed = true;
     }
 
+    uint64_t epoch = res["time"] | 0;
+    if (epoch > 1700000000ULL) {
+        time_t server = (time_t)epoch;
+        int64_t drift = (int64_t)server - (int64_t)now;
+        if (drift > 2 || drift < -2) {
+            mraf_set_now(server);
+            mraf_tick_reset();
+            if (drift > 60 || drift < -60) {
+                mraf_platform_persistent_time_write(server);
+            }
+        }
+    }
+
     if (changed) {
         settingsSave(g_cfg);
     }
@@ -196,28 +214,51 @@ static void remotePoll(void)
     }
 
     size_t blen = serializeJson(req, body, sizeof(body));
+    g_remoteLastBodyLen = blen;
     if (blen == 0 || blen >= sizeof(body)) {
         g_remoteLastOk = false;
-        copyRemoteText(g_remoteLastError, sizeof(g_remoteLastError),
-                       "request too large");
+        g_remoteFailCount++;
+        snprintf(g_remoteLastError, sizeof(g_remoteLastError),
+                 "request too large (%u bytes)", (unsigned)blen);
+        g_remoteWantData = false;
+        g_remoteConsole[0] = '\0';
+        if (g_remoteFailCount >= 3) {
+            g_remoteAckId[0] = '\0';
+            g_remoteAckResult[0] = '\0';
+        }
         return;
     }
 
-    printk("MRAF: CoAP POST %s:%u%s token=%s\n", g_cfg.coap_host,
+    printk("MRAF: CoAP POST %s:%u%s token=%s len=%u\n", g_cfg.coap_host,
            (unsigned)g_cfg.coap_port, g_cfg.coap_path,
-           g_cfg.coap_token[0] ? "set" : "empty");
+           g_cfg.coap_token[0] ? "set" : "empty", (unsigned)blen);
     int code = coapPost(g_cfg.coap_host, g_cfg.coap_port, g_cfg.coap_path,
                         body, resp, sizeof(resp), 900);
     g_remoteLastCode = code;
     if (code < 64 || code >= 96) {
         g_remoteLastOk = false;
-        snprintf(g_remoteLastError, sizeof(g_remoteLastError),
-                 "CoAP error %d", code);
+        g_remoteFailCount++;
+        int eno = coapLastErrno();
+        if (eno) {
+            snprintf(g_remoteLastError, sizeof(g_remoteLastError),
+                     "CoAP error %d errno %d (%u bytes)", code, eno,
+                     (unsigned)blen);
+        } else {
+            snprintf(g_remoteLastError, sizeof(g_remoteLastError),
+                     "CoAP error %d (%u bytes)", code, (unsigned)blen);
+        }
         printk("MRAF: CoAP poll failed code=%d error=%s\n", code,
                g_remoteLastError);
+        g_remoteWantData = false;
+        g_remoteConsole[0] = '\0';
+        if (g_remoteFailCount >= 3) {
+            g_remoteAckId[0] = '\0';
+            g_remoteAckResult[0] = '\0';
+        }
         return;
     }
 
+    g_remoteFailCount = 0;
     g_remoteLastOk = true;
     g_remoteLastError[0] = '\0';
     printk("MRAF: CoAP poll ok code=%d device=%s\n", code, g_cfg.device_id);

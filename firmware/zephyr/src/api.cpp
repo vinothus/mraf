@@ -99,26 +99,28 @@ static const struct http_header g_hdr_401[] = {
 
 static void sendJson(JsonDocument &doc, int status, struct http_response_ctx *response)
 {
-    size_t n = serializeJson(doc, g_resp, sizeof(g_resp));
-    if (n == 0 || n <= 2) {
-        // Allocation failed: ArduinoJson with exceptions off silently drops
-        // the values, leaving an empty document that serializes as "{}".
-        // Answer with a pre-serialized fallback instead of an empty body.
-        static const char fallback[] =
-            "{\"ok\":false,\"error\":\"device out of memory, retry or reboot\"}";
-        response->status = (enum http_status)status;
-        response->headers = status == 401 ? g_hdr_401 : g_hdr_json;
-        response->header_count = status == 401 ? 3 : 2;
-        response->body = (const uint8_t *)fallback;
-        response->body_len = sizeof(fallback) - 1;
-        response->final_chunk = true;
-        return;
+    static const char oom_fallback[] =
+        "{\"ok\":false,\"error\":\"device out of memory, retry or reboot\"}";
+    static const char large_fallback[] =
+        "{\"ok\":false,\"error\":\"response too large, retry or reduce events\"}";
+    const char *fallback = nullptr;
+    size_t fallback_len = 0;
+    size_t needed = measureJson(doc);
+    size_t n = 0;
+
+    if (needed > 2 && needed < sizeof(g_resp)) {
+        n = serializeJson(doc, g_resp, sizeof(g_resp));
     }
+    if (n != needed) {
+        fallback = needed > 2 ? large_fallback : oom_fallback;
+        fallback_len = needed > 2 ? sizeof(large_fallback) - 1 : sizeof(oom_fallback) - 1;
+    }
+
     response->status = (enum http_status)status;
     response->headers = status == 401 ? g_hdr_401 : g_hdr_json;
     response->header_count = status == 401 ? 3 : 2;
-    response->body = (const uint8_t *)g_resp;
-    response->body_len = n;
+    response->body = fallback ? (const uint8_t *)fallback : (const uint8_t *)g_resp;
+    response->body_len = fallback ? fallback_len : n;
     response->final_chunk = true;
 }
 
@@ -520,8 +522,12 @@ static int h_selftest(Route &, const struct http_request_ctx *, struct http_resp
 
     float batteryV = power["battery_v"] | 0.0f;
     bool mains = power["present"] | false;
-    snprintf(detail, sizeof(detail), "Mains %s · battery-backed %.2f V",
-             mains ? "present" : "outage", (double)batteryV);
+    bool assumed = power["assumed"] | false;
+    int batteryWhole = (int)batteryV;
+    int batteryFrac = (int)((batteryV - batteryWhole) * 100.0f + 0.5f);
+    snprintf(detail, sizeof(detail), "Mains %s%s · battery-backed %d.%02d V",
+             mains ? "present" : "outage", assumed ? " (assumed)" : "",
+             batteryWhole, batteryFrac);
     addSelfTestCheck(checks, "Power rail", mains, detail, "warn");
     addSelfTestCheck(checks, "Battery ADC", batteryV >= 11.0f, detail);
 
@@ -605,12 +611,16 @@ static int h_selftest(Route &, const struct http_request_ctx *, struct http_resp
     if (!pumpFault[0]) pumpFault = "none";
     snprintf(detail, sizeof(detail), "GPIO %u · state %s · fault %s", (unsigned)pumpPin,
              (const char *)(pump["state"] | ""), pumpFault);
-    addSelfTestCheck(checks, "Pump contactor", pumpOk, detail);
+    addSelfTestCheck(checks, "Pump contactor", pumpOk, detail, mains ? "fail" : "warn");
 
     float currentA = pump["current_a"] | 0.0f;
-    snprintf(detail, sizeof(detail), "ACS712 reads %.2f A · zero %.0f mV", (double)currentA,
-             (double)(sensors["acs_zero_mv"] | 1250.0f));
-    addSelfTestCheck(checks, "Current sensor", currentA >= 0.0f && currentA <= 30.0f, detail);
+    int currentWhole = (int)currentA;
+    int currentFrac = (int)((currentA - currentWhole) * 100.0f + 0.5f);
+    int acsZeroMv = (int)(sensors["acs_zero_mv"] | 1250.0f);
+    snprintf(detail, sizeof(detail), "ACS712 reads %d.%02d A · zero %d mV",
+             currentWhole, currentFrac, acsZeroMv);
+    addSelfTestCheck(checks, "Current sensor", currentA >= 0.0f && currentA <= 30.0f,
+                     detail, mains ? "fail" : "warn");
 
     bool tankFull = sensors["tank_full"] | false;
     snprintf(detail, sizeof(detail), "input %s · %s", tankFull ? "active" : "idle",
@@ -824,6 +834,7 @@ static int h_time(Route &route, const struct http_request_ctx *,
     if (!mraf_platform_is_simulator()) {
         mraf_platform_rtc_write((time_t)epoch);
     }
+    mraf_platform_persistent_time_write((time_t)epoch);
 
     JsonDocument out;
     k_mutex_lock(&g_state_lock, K_FOREVER);

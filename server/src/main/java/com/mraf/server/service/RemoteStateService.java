@@ -22,6 +22,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -379,6 +380,7 @@ public class RemoteStateService {
         response.put("confirmed", dev.confirmed);
         response.put("profile", dev.profile);
         response.put("poll_interval_sec", dev.pollIntervalSec);
+        response.put("time", Instant.now().getEpochSecond());
         return response;
     }
 
@@ -666,6 +668,7 @@ public class RemoteStateService {
         return requestSummary(dev, "queued", r);
     }
 
+    @Transactional
     public synchronized void clearQueue(String id) {
         Device dev = requireDevice(id);
         int count = dev.queue.size() + (dev.inflight == null ? 0 : 1);

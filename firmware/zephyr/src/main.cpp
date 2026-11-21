@@ -73,13 +73,19 @@ int main(void)
 
     time_t base = time(nullptr);
     time_t rtc = 0;
+    time_t persisted = 0;
     bool rtc_ok = mraf_platform_rtc_begin() && mraf_platform_rtc_read(&rtc) &&
                   rtc > 1700000000;
+    bool persisted_ok = mraf_platform_persistent_time_read(&persisted) &&
+                        persisted > 1700000000;
     if (rtc_ok) {
         base = rtc;
         printk("RTC time: %s\n", localTimeString(rtc).c_str());
+    } else if (persisted_ok) {
+        base = persisted;
+        printk("Persistent time: %s\n", localTimeString(persisted).c_str());
     } else if (!mraf_platform_is_simulator()) {
-        printk("RTC not present or not set; waiting for NTP/manual time\n");
+        printk("RTC/persistent time unavailable; waiting for NTP/manual time\n");
     }
     mraf_clock_init(base);
     if (mraf_platform_is_simulator()) {
@@ -105,11 +111,17 @@ int main(void)
     printk("MRAF %s on %s, HTTP port %d, device %s\n", FW_VERSION,
            mraf_platform_name(), mraf_api_port(), g_cfg.device_id);
 
+    int64_t last_time_persist_ms = k_uptime_get();
     while (1) {
         mraf_platform_poll_network();
         mraf_tick_catchup();
         mraf_service_pulses();
         updateStatusLed();
+        if (mraf_time_valid() &&
+            k_uptime_get() - last_time_persist_ms >= 10 * 60 * 1000) {
+            mraf_platform_persistent_time_write(mraf_now());
+            last_time_persist_ms = k_uptime_get();
+        }
         k_msleep(10);
     }
     return 0;

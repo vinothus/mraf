@@ -421,6 +421,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
         <div class="field"><label class="row"><input type="checkbox" id="set-resume"> Resume pump after power returns</label></div>
         <div class="field"><label class="row"><input type="checkbox" id="set-tanklow"> Tank-full float is active LOW</label></div>
         <div class="field"><label class="row"><input type="checkbox" id="set-sumplow"> Sump-dry float is active LOW</label></div>
+        <div class="field"><label class="row"><input type="checkbox" id="set-assume-mains"> Treat controller as powered (ignore mains-sense input)</label></div>
         <div class="field"><label>Max boost (min)</label><input id="set-maxboost" type="number" min="1" max="1440"></div>
       </div>
       <div class="card">
@@ -1036,12 +1037,15 @@ function renderRelays(){
       ? `${esc(EQ_LABEL[eq]||eq)} · ${gpio} · ${esc(r.zone||"")} · ${esc(r.mode)} · ${windows}${live}`
       : r.pin ? `disabled · ${gpio}${live}` : "disabled";
     const pulse = r.pulse_mode
-      ? `<div class="pulsebox"><span class="small-note">pulse</span>
-           <input type="number" class="pulse-ms" data-pulse-id="${r.id}" min="20" max="10000" step="50" value="${r.pulse_on_ms||600}"> ms
+      ? `<div class="pulsebox">
+           <span class="small-note">pulse ${contactor ? "START" : "ON"}</span>
+           <input type="number" class="pulse-ms-on" data-pulse-id="${r.id}" min="20" max="10000" step="50" value="${r.pulse_on_ms||600}"> ms
+           <span class="small-note">pulse ${contactor ? "STOP" : "OFF"}</span>
+           <input type="number" class="pulse-ms-off" data-pulse-id="${r.id}" min="20" max="10000" step="50" value="${r.pulse_off_ms||600}"> ms
          </div>
          <div class="btnrow">
-            <button class="action small" data-relay="${r.id}" data-mode="on" data-pulse="1">Pulse ${contactor ? "START" : "ON"}</button>
-            <button class="action small danger" data-relay="${r.id}" data-mode="off" data-pulse="1">Pulse ${contactor ? "STOP" : "OFF"}</button>
+            <button class="action small" data-relay="${r.id}" data-mode="on" data-pulse="1" data-pulse-ms="${r.pulse_on_ms||600}">Pulse ${contactor ? "START" : "ON"}</button>
+            <button class="action small danger" data-relay="${r.id}" data-mode="off" data-pulse="1" data-pulse-ms="${r.pulse_off_ms||600}">Pulse ${contactor ? "STOP" : "OFF"}</button>
          </div>`
       : `<div class="btnrow">
            <button class="action small" data-relay="${r.id}" data-mode="auto">Auto</button>
@@ -1354,6 +1358,44 @@ function ensureProfiles(){
   config.profiles = (Array.isArray(cached) && cached.length ? cached : defaultProfiles()).map(normalizeProfile);
   return config.profiles;
 }
+function syncActiveProfileFromConfig(){
+  if(!config) return;
+  const list = ensureProfiles();
+  const activeId = (config.device && config.device.profile) || "agri";
+  const p = list.find(x=>x.id===activeId);
+  if(!p) return;
+  const chans = Array.isArray(config.channels) ? config.channels : [];
+  const pins = config.pins || {};
+  p.relay_count = Math.max(1, Math.min(12, chans.length || p.relay_count));
+  p.pins = p.pins || {};
+  p.pins.relays = Array.isArray(pins.relays) ? pins.relays.slice(0,p.relay_count) :
+    chans.map((ch,i)=>Number(ch.pin)||DEFAULT_RELAY_PINS[i]||DEFAULT_RELAY_PINS[0]);
+  p.pins.relays_off = Array.isArray(pins.relays_off) ? pins.relays_off.slice(0,p.relay_count) :
+    chans.map((ch,i)=>Number(ch.pin_off)||p.pins.relays[i]||DEFAULT_RELAY_PINS[i]);
+  p.pins.pump = Number(pins.pump)||p.pins.pump||33;
+  p.channels = chans.map((ch,i)=>{
+    const base = p.channels[i] || newProfileChannel(i);
+    const w = ch.windows && ch.windows[0] ? ch.windows[0] : null;
+    return Object.assign({}, base, {
+      id:i+1,
+      name: ch.name || base.name,
+      zone: ch.zone || base.zone,
+      equipment: ch.equipment || base.equipment,
+      enabled: !!ch.enabled,
+      days: Number(ch.days)||0,
+      pulse_mode: !!ch.pulse_mode,
+      pulse_on_ms: Number(ch.pulse_on_ms)||base.pulse_on_ms||600,
+      pulse_off_ms: Number(ch.pulse_off_ms)||base.pulse_off_ms||600,
+      on: w ? w.on : "",
+      off: w ? w.off : ""
+    });
+  });
+  config.profiles = list.map(normalizeProfile);
+  try{ localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(config.profiles)); }catch(_){ }
+  const focused = document.activeElement;
+  if(!focused || !/^(INPUT|SELECT|TEXTAREA)$/.test(focused.tagName) || !$("#tab-profiles").contains(focused))
+    profileSelectedId = activeId;
+}
 function renderProfiles(){
   if(!config || $("#tab-profiles").hidden) return;
   const focused = document.activeElement;
@@ -1414,7 +1456,8 @@ function syncContactorRow(row){
     used.add(Number($(".prof-pin",r).value));
     if(r !== row && r.classList.contains("contactor")) used.add(Number($(".prof-pin-off",r).value));
   });
-  const free = GPIO_PINS.find(p=>!used.has(p));
+  const reserved = new Set([4,5,32,33]);
+  const free = [15].concat(GPIO_PINS).find(p=>!used.has(p) && !reserved.has(p));
   if(free) off.value = free;
 }
 function collectProfile(){
@@ -1591,6 +1634,7 @@ function fillSettings(){
   $("#set-resume").checked = !!p.resume_after_outage;
   $("#set-tanklow").checked = !!p.tank_full_active_low;
   $("#set-sumplow").checked = !!p.sump_dry_active_low;
+  $("#set-assume-mains").checked = !!s.assume_mains_present;
   $("#set-maxboost").value = s.max_boost_min ?? 180;
   $("#set-coap-enabled").checked = !!co.enabled;
   $("#set-coap-host").value = co.host || "";
@@ -1641,6 +1685,7 @@ function readRecurring(){
 
 function buildConfig(){
   const cfg = JSON.parse(JSON.stringify(config || {}));
+  delete cfg.profiles;
   cfg.device = cfg.device || {};
   cfg.wifi = cfg.wifi || {};
   cfg.channels = $$("#schedules .sched-row").map((row,i)=>({
@@ -1711,6 +1756,7 @@ function buildConfig(){
   if(turnPass) cfg.webrtc.turn_pass = turnPass;
 
   cfg.safety = cfg.safety || {};
+  cfg.safety.assume_mains_present = $("#set-assume-mains").checked;
   cfg.safety.max_boost_min = Number($("#set-maxboost").value) || 180;
   return cfg;
 }
@@ -1739,6 +1785,7 @@ async function saveConfig(){
 async function loadConfig(){
   try{
     config = await api("/api/config");
+    syncActiveProfileFromConfig();
     schedulesRendered = false;
     recurringRendered = false;
     applyBranding();
@@ -1846,8 +1893,9 @@ document.addEventListener("click", async (ev)=>{
     const mode = relayBtn.dataset.mode;
     const cmd = {target:"relay", id, mode};
     if(relayBtn.dataset.pulse){
-      const box = $(`.pulse-ms[data-pulse-id="${id}"]`);
-      cmd.pulse_ms = box ? Number(box.value) : 600;
+      const selector = mode === "on" ? ".pulse-ms-on" : ".pulse-ms-off";
+      const box = $(`${selector}[data-pulse-id="${id}"]`);
+      cmd.pulse_ms = box ? Number(box.value) : (Number(relayBtn.dataset.pulseMs)||600);
     }
     try{ status = await post("/api/control", cmd); renderDash(); }
     catch(e){ toast(e.message); }

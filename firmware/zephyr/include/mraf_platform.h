@@ -31,6 +31,8 @@ void mraf_set_timezone(const char *tz);
 bool mraf_platform_rtc_begin(void);
 bool mraf_platform_rtc_read(time_t *out);
 void mraf_platform_rtc_write(time_t t);
+bool mraf_platform_persistent_time_read(time_t *out);
+void mraf_platform_persistent_time_write(time_t t);
 
 void mraf_platform_led(bool on);
 void mraf_platform_restart(void);

@@ -83,6 +83,7 @@ void settingsDefaults(Config &cfg) {
     copyStr(cfg.remote_pass, sizeof(cfg.remote_pass), DEFAULT_REMOTE_PASS);
     cfg.remote_register = true;
     cfg.max_boost_min = DEFAULT_MAX_BOOST_MIN;
+    cfg.assume_mains_present = false;
     cfg.nrecurring = 0;
 
     cfg.wireguard.enabled = false;
@@ -617,6 +618,8 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
         if (v < 1 || v > 1440) { error = "safety: max_boost_min must be 1..1440"; return false; }
         tmp.max_boost_min = (uint16_t)v;
     }
+    if (safety && !safety["assume_mains_present"].isNull())
+        tmp.assume_mains_present = safety["assume_mains_present"].as<bool>();
 
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
         if (!tmp.relay_off_pins[i]) tmp.relay_off_pins[i] = tmp.relay_pins[i];
@@ -814,6 +817,7 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
 
     JsonObject safety = root["safety"].to<JsonObject>();
     safety["max_boost_min"] = cfg.max_boost_min;
+    safety["assume_mains_present"] = cfg.assume_mains_present;
 }
 
 bool settingsSave(const Config &cfg) {

@@ -9,6 +9,28 @@
 
 static uint16_t s_msg_id;
 static uint32_t s_token_seq;
+static int s_last_errno;
+
+int coapLastErrno(void)
+{
+    return s_last_errno;
+}
+
+static int openSocket(const struct sockaddr_in &addr, int &fd)
+{
+    fd = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) {
+        s_last_errno = errno;
+        return -4;
+    }
+    if (zsock_connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        s_last_errno = errno;
+        zsock_close(fd);
+        fd = -1;
+        return -4;
+    }
+    return 0;
+}
 
 static bool appendOption(uint8_t *buf, size_t cap, size_t &pos,
                          uint16_t &last, uint16_t number,
@@ -175,7 +197,9 @@ int coapPost(const char *host, uint16_t port, const char *path,
              const char *payload, char *response, size_t response_cap,
              unsigned long timeout_ms)
 {
+    s_last_errno = 0;
     if (!host || !host[0] || !path || !payload) {
+        s_last_errno = EINVAL;
         return -1;
     }
     if (response && response_cap) {
@@ -188,6 +212,7 @@ int coapPost(const char *host, uint16_t port, const char *path,
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     if (zsock_getaddrinfo(host, nullptr, &hints, &res) != 0 || !res) {
+        s_last_errno = DNS_EAI_NONAME;
         return -3;
     }
 
@@ -196,31 +221,51 @@ int coapPost(const char *host, uint16_t port, const char *path,
     addr.sin_port = htons(port);
     zsock_freeaddrinfo(res);
 
-    uint8_t packet[640];
+    static uint8_t packet[4096];
     int plen = buildRequest(path, payload, packet, sizeof(packet));
     if (plen < 0) {
+        s_last_errno = EMSGSIZE;
         return -1;
     }
 
-    int fd = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (fd < 0) {
-        return -4;
-    }
-    if (zsock_connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        zsock_close(fd);
-        return -4;
+    int fd = -1;
+    int rc = openSocket(addr, fd);
+    if (rc != 0) {
+        return rc;
     }
 
     const uint8_t *token = packet + 4;
     uint16_t mid = (uint16_t)((packet[2] << 8) | packet[3]);
-    static uint8_t in[3072];
+    static uint8_t in[8192];
 
     int result = -2;
     for (uint8_t attempt = 0; attempt < 2 && result == -2; attempt++) {
-        if (zsock_send(fd, packet, (size_t)plen, 0) < 0) {
-            result = -5;
+        bool sent = false;
+        for (uint8_t send_try = 0; send_try < 3; send_try++) {
+            if (zsock_send(fd, packet, (size_t)plen, 0) >= 0) {
+                sent = true;
+                s_last_errno = 0;
+                break;
+            }
+            int send_errno = errno;
+            zsock_close(fd);
+            fd = -1;
+            if (send_try == 2) {
+                s_last_errno = send_errno;
+                result = -5;
+                break;
+            }
+            k_msleep(50);
+            rc = openSocket(addr, fd);
+            if (rc != 0) {
+                s_last_errno = send_errno;
+                return rc;
+            }
+        }
+        if (!sent || result == -5) {
             break;
         }
+
         int64_t start = k_uptime_get();
         while (k_uptime_get() - start < (int64_t)timeout_ms) {
             struct zsock_pollfd pfd = {.fd = fd, .events = ZSOCK_POLLIN};
@@ -238,7 +283,7 @@ int coapPost(const char *host, uint16_t port, const char *path,
                 memcmp(in + 4, token, 4) == 0 && rmid == mid) {
                 uint8_t code = in[1];
                 if (code == 0) {
-                    continue; // empty ACK, wait for the separate response
+                    continue;
                 }
                 readPayload(in, got, (size_t)(4 + tkl), response, response_cap);
                 result = code;
@@ -247,6 +292,8 @@ int coapPost(const char *host, uint16_t port, const char *path,
         }
     }
 
-    zsock_close(fd);
+    if (fd >= 0) {
+        zsock_close(fd);
+    }
     return result;
 }

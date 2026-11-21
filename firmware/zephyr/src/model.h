@@ -165,6 +165,7 @@ struct Config {
     RecurringSchedule recurring[MAX_RECURRING];
     uint8_t nrecurring;
     uint16_t max_boost_min;
+    bool assume_mains_present;
 };
 
 struct RelayRuntime {

@@ -80,11 +80,14 @@ Every poll is a CoAP confirmable POST with a JSON body:
 ```
 
 The server replies with a 2.xx response and a JSON request. Every response
-includes the current meta fields:
+includes the current meta fields. The `time` field is the server Unix epoch;
+the firmware applies it when the drift exceeds two seconds and persists it when
+the drift exceeds 60 seconds:
 
 ```json
 {"request": "control", "id": "MRAF-A1B2C3-ctl-1042",
  "confirmed": true, "profile": "agri", "poll_interval_sec": 60,
+ "time": 1793503230,
  "commands": [
    {"target": "pump", "mode": "on"},
    {"target": "relay", "id": 3, "mode": "on", "pulse_ms": 800}
@@ -95,7 +98,8 @@ or:
 
 ```json
 {"request": "data", "id": "MRAF-A1B2C3-data-208",
- "confirmed": true, "profile": "home", "poll_interval_sec": 120}
+ "confirmed": true, "profile": "home", "poll_interval_sec": 120,
+ "time": 1793503230}
 ```
 
 or a configuration request (abbreviated):

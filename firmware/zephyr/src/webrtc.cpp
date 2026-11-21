@@ -700,6 +700,7 @@ static void dispatch(const char *raw)
             if (!mraf_platform_is_simulator()) {
                 mraf_platform_rtc_write((time_t)epoch);
             }
+            mraf_platform_persistent_time_write((time_t)epoch);
         }
         replyWithStatus(out);
     } else if (strcmp(cmd, "pump-reset") == 0) {

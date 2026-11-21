@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -49,6 +50,8 @@ static float g_sim_battery_v = 13.2f;
 
 static bool g_rtc_ok;
 static time_t g_rtc_epoch;
+static bool g_persistent_time_ok;
+static time_t g_persistent_time;
 
 static void sim_init_once(void)
 {
@@ -171,6 +174,7 @@ void mraf_platform_set_epoch(time_t t)
 {
     g_rtc_epoch = t;
     g_rtc_ok = true;
+    mraf_platform_persistent_time_write(t);
 }
 
 bool mraf_platform_rtc_begin(void)
@@ -484,6 +488,59 @@ bool mraf_storage_save(const char *json)
 }
 
 #endif
+
+bool mraf_platform_persistent_time_read(time_t *out)
+{
+    char buf[32] = {};
+    bool loaded = false;
+#if defined(CONFIG_ARCH_POSIX) || defined(CONFIG_FILE_SYSTEM)
+    FILE *f = fopen(CONFIG_MRAF_SETTINGS_PATH ".time", "rb");
+    if (f) {
+        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        buf[n] = '\0';
+        loaded = n > 0;
+    }
+#endif
+    if (!loaded) {
+        if (!g_persistent_time_ok) {
+            return false;
+        }
+        if (out) {
+            *out = g_persistent_time;
+        }
+        return true;
+    }
+    errno = 0;
+    char *end = nullptr;
+    long long value = strtoll(buf, &end, 10);
+    if (errno != 0 || end == buf || *end != '\0' || value <= 1700000000LL) {
+        return false;
+    }
+    g_persistent_time_ok = true;
+    g_persistent_time = (time_t)value;
+    if (out) {
+        *out = g_persistent_time;
+    }
+    return true;
+}
+
+void mraf_platform_persistent_time_write(time_t t)
+{
+    if ((long long)t <= 1700000000LL) {
+        return;
+    }
+    g_persistent_time_ok = true;
+    g_persistent_time = t;
+#if defined(CONFIG_ARCH_POSIX) || defined(CONFIG_FILE_SYSTEM)
+    FILE *f = fopen(CONFIG_MRAF_SETTINGS_PATH ".time", "wb");
+    if (!f) {
+        return;
+    }
+    fprintf(f, "%lld", (long long)t);
+    fclose(f);
+#endif
+}
 
 void mraf_storage_init(void)
 {

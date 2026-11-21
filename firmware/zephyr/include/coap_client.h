@@ -12,6 +12,8 @@ int coapPost(const char *host, uint16_t port, const char *path,
              const char *payload, char *response, size_t response_cap,
              unsigned long timeout_ms);
 
+int coapLastErrno(void);
+
 #ifdef __cplusplus
 }
 #endif

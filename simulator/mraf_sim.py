@@ -426,6 +426,9 @@ def normalize_config(cfg: dict) -> dict:
     out["safety"]["max_boost_min"] = _int(
         out["safety"].get("max_boost_min"), 180, 1, 1440, "safety: max_boost_min"
     )
+    out["safety"]["assume_mains_present"] = bool(
+        out["safety"].get("assume_mains_present", False)
+    )
     dev = out["device"]
     dev["name"] = str(dev.get("name") or "Neer Kaavalan")[:39]
     dev["heading"] = str(dev.get("heading") or "நீர்காவலன்")[:63]
@@ -1185,10 +1188,14 @@ class SimApp:
         self.controller.add_event("system", "boot", self._sim_cursor)
 
     # -- simulation loop ----------------------------------------------------
+    def _mains_present_locked(self) -> bool:
+        return bool(self.cfg["safety"].get("assume_mains_present")
+                    or self.sim["mains"])
+
     def _current_locked(self) -> float:
         if self.sim["current_override"] is not None:
             return max(0.0, float(self.sim["current_override"]))
-        if (self.controller.pump.on and self.sim["mains"]
+        if (self.controller.pump.on and self._mains_present_locked()
                 and not self.sim["tank_full"] and not self.sim["sump_dry"]):
             return self.sim["pump_running_current_a"] + random.uniform(-0.03, 0.03)
         return 0.0
@@ -1196,14 +1203,14 @@ class SimApp:
     def _tick_once_locked(self, t: float) -> None:
         # Battery is a simple model: charge when mains is present, drain slowly
         # during an outage. The controller only needs the voltage for warnings.
-        if self.sim["mains"]:
+        if self._mains_present_locked():
             self.sim["battery_v"] = min(13.6, self.sim["battery_v"] + 0.01)
         else:
             dt = max(0.0, t - self._last_tick_t)
             self.sim["battery_v"] = max(11.0, self.sim["battery_v"] - dt * 0.08 / 3600.0)
         current = self._current_locked()
         self.controller.tick(
-            t, self.sim["mains"], self.sim["tank_full"], self.sim["sump_dry"],
+            t, self._mains_present_locked(), self.sim["tank_full"], self.sim["sump_dry"],
             current, self.sim["battery_v"],
         )
         self._last_tick_t = t
@@ -1328,7 +1335,9 @@ class SimApp:
                 },
             },
             "power": {
-                "present": self.sim["mains"],
+                "present": self._mains_present_locked(),
+                "sense": self.sim["mains"],
+                "assumed": bool(self.cfg["safety"].get("assume_mains_present")),
                 "battery_v": round(self.sim["battery_v"], 2),
                 "outage_sec": int(self.controller.outage_seconds(now)),
                 "battery_backed": True,
@@ -1369,7 +1378,7 @@ class SimApp:
             "webrtc": self._webrtc_status_locked(wrc),
             "events": events,
             "sim": {
-                "mains": self.sim["mains"],
+                "mains": self._mains_present_locked(),
                 "tank_full": self.sim["tank_full"],
                 "sump_dry": self.sim["sump_dry"],
                 "current_override": self.sim["current_override"],

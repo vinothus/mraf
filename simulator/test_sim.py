@@ -155,6 +155,19 @@ class RelayTests(unittest.TestCase):
         app.sim_step(2)
         self.assertFalse(app.controller.relays[1].on)
 
+    def test_assume_mains_present_ignores_outage_gate(self):
+        cfg = load_config(CONFIG)
+        cfg["safety"]["assume_mains_present"] = True
+        app = SimApp(cfg, speed=0)
+        app.set_time(epoch(app, 2026, 11, 2, 17, 59, 30))
+        app.sim_power(False)
+        app.sim_step(60)
+        self.assertTrue(app.controller.relays[0].on)
+        power = app.snapshot()["power"]
+        self.assertTrue(power["present"])
+        self.assertFalse(power["sense"])
+        self.assertTrue(power["assumed"])
+
     def test_manual_override_and_boost(self):
         app = make_app()
         app.control("relay", "on", 1)

@@ -169,8 +169,13 @@ The API never returns the auth password or Wi-Fi password.
 - Timezone is a POSIX TZ string, default `IST-5:30` (UTC+05:30).
 - NTP servers: `pool.ntp.org`, `time.google.com`, `in.pool.ntp.org`.
 - DS3231 is read at boot and written after a manual time set.
+- The epoch is also saved to persistent storage and used at boot when the RTC is
+  absent or invalid, so power cycling does not reset the clock to 1970.
+- The firmware writes the server-provided epoch when the server clock differs by
+  more than 60 seconds.
 - The dashboard and API display local time.
-- `POST /api/time` accepts a Unix epoch and updates the system clock and RTC.
+- `POST /api/time` accepts a Unix epoch and updates the system clock, RTC and
+  persistent time store.
 
 ## Web UI and API
 

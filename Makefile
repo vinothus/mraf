@@ -22,7 +22,7 @@ ZEPHYR_ESPTOOL ?= /opt/mraf-tools/arduino15/packages/esp32/tools/esptool_py/5.3.
 
 .PHONY: all ui compile flash monitor test test-all test-cpp test-sim server-test \
 	zephyr-build zephyr-build-native zephyr-build-esp32 zephyr-run zephyr-e2e \
-	zephyr-test zephyr-flash zephyr-monitor \
+	zephyr-test zephyr-flash zephyr-monitor gpio14-pulse-test \
 	server-build server-run matter-install matter-run matter-check matter-test \
 	sim sim-scenario diagrams wokwi clean help
 
@@ -92,6 +92,9 @@ zephyr-run: zephyr-build-native
 zephyr-e2e: zephyr-build-native
 	MRAF_E2E_PORT="$(ZEPHYR_E2E_PORT)" python3 tests/test_zephyr_e2e.py
 
+gpio14-pulse-test:
+	python3 tests/gpio14_motor_pulse_test.py
+
 zephyr-test: zephyr-e2e
 
 zephyr-flash: zephyr-build-esp32
@@ -139,6 +142,7 @@ help:
 	@echo "make zephyr-build-esp32   build the Zephyr ESP32 firmware"
 	@echo "make zephyr-run           run the Zephyr native_sim firmware on :8080"
 	@echo "make zephyr-e2e           build and run end-to-end REST API tests"
+	@echo "make gpio14-pulse-test    pulse motor START/STOP GPIOs on the live controller"
 	@echo "make zephyr-flash PORT=/dev/ttyUSB0  build and flash the ESP32"
 	@echo "make zephyr-monitor PORT=/dev/ttyUSB0"
 	@echo "make sim                  native simulator on http://localhost:8080"

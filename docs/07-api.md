@@ -289,14 +289,16 @@ Validation rules include:
   `yearly`; `day_of_month` 1-31, `month` 1-12, `action` is `on`, `off` or
   `auto`, and channels are selected with `channel_mask` (bit 0 = relay 1) or a
   `channels` id array. Off rules win over on rules.
-- `POST /api/selftest` runs a non-destructive hardware check and returns
-  `checks[]` with PASS/WARN/FAIL per ESP32 subsystem, relay coil, contactor and
-  sensor, plus an overall `summary`.
+- `POST /api/selftest` briefly pulses relay coils and the pump contactor and
+  returns `checks[]` with PASS/WARN/FAIL per ESP32 subsystem, relay coil,
+  contactor and sensor, plus an overall `summary`.
 - CoAP `port` 1-65535, `path` starts with `/`, `interval_sec` 10-3600,
   `user`/`pass` are the server login stored at registration.
 - `min_off_sec` 30-3600, `max_run_min` 1-720, `recovery_delay_sec` 0-600,
   `dry_run_current_a` 0.5-20, `dry_run_grace_sec` 5-120, `max_boost_min`
-  1-1440.
+  1-1440. `safety.assume_mains_present` defaults to `false`; set it to `true`
+  for USB-powered installations without a mains-sense input so schedules and
+  manual relay/pump commands are not blocked by the outage gate.
 
 ## POST /api/control
 
@@ -361,8 +363,9 @@ curl -u admin:farm1234 -H 'Content-Type: application/json' \
   -d '{"epoch":1793579400}'
 ```
 
-Epoch must be at least 1700000000. The RTC is updated when present. The
-response is the full status object plus `"ok": true`.
+Epoch must be at least 1700000000. The RTC is updated when present, and the
+epoch is saved to persistent storage for boot after power loss. The response is
+the full status object plus `"ok": true`.
 
 In the dashboard, **Settings → Time & maintenance** accepts device-local wall
 time. The browser converts it to epoch using the configured POSIX timezone, so

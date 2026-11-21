@@ -69,6 +69,16 @@ class RemoteStateServiceTest {
     }
 
     @Test
+    void pollResponsesIncludeServerEpoch() throws Exception {
+        register();
+        service.confirmDevice(DEVICE, mapper.createObjectNode());
+
+        JsonNode res = poll(confirmedPoll());
+
+        assertTrue(res.path("time").asLong() > 1700000000L);
+    }
+
+    @Test
     void registersAndWaitsForAdminConfirmation() throws Exception {
         assertEquals("pending", register());
 

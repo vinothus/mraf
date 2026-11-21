@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -128,7 +129,7 @@ void mraf_gpio_config(uint8_t pin, uint8_t mode)
     const struct device *dev = gpio_for(pin);
     gpio_flags_t flags = GPIO_INPUT;
     if (mode == OUTPUT) {
-        flags = GPIO_OUTPUT;
+        flags = GPIO_OUTPUT | GPIO_INPUT;
     } else if (mode == INPUT_PULLUP) {
         flags = GPIO_INPUT | GPIO_PULL_UP;
     }
@@ -281,6 +282,7 @@ void mraf_platform_set_epoch(time_t t)
 {
     mraf_set_now(t);
     mraf_platform_rtc_write(t);
+    mraf_platform_persistent_time_write(t);
 }
 
 static void time_sync_thread(void *a, void *b, void *c)
@@ -299,6 +301,7 @@ static void time_sync_thread(void *a, void *b, void *c)
             time_t t = (time_t)ts.seconds;
             mraf_set_now(t);
             mraf_platform_rtc_write(t);
+            mraf_platform_persistent_time_write(t);
             g_time_synced = true;
             printk("SNTP time: %s\n", localTimeString(t).c_str());
             break;
@@ -406,6 +409,38 @@ bool mraf_storage_save(const char *json)
         return false;
     }
     return settings_save_one("mraf/settings", json, strlen(json)) == 0;
+}
+
+bool mraf_platform_persistent_time_read(time_t *out)
+{
+    char buf[32];
+    ssize_t n = settings_load_one("mraf/time", buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        return false;
+    }
+    buf[n] = '\0';
+    errno = 0;
+    char *end = nullptr;
+    long long value = strtoll(buf, &end, 10);
+    if (errno != 0 || end == buf || *end != '\0' || value <= 1700000000LL) {
+        return false;
+    }
+    if (out) {
+        *out = (time_t)value;
+    }
+    return true;
+}
+
+void mraf_platform_persistent_time_write(time_t t)
+{
+    if ((long long)t <= 1700000000LL) {
+        return;
+    }
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%lld", (long long)t);
+    if (n > 0) {
+        settings_save_one("mraf/time", buf, (size_t)n);
+    }
 }
 
 // --- Wi-Fi / network ------------------------------------------------------
