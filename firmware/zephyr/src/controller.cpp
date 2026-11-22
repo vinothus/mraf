@@ -76,10 +76,32 @@ void Controller::servicePulses() {
             rt.output = false;
         }
     }
+    if (pump_.pulsing && (long)(pulse_clock_ms_ - pump_.pulse_until_ms) >= 0) {
+        pump_.pulsing = false;
+        if (pump_.pulse_pin) writeRelayPin(pump_.pulse_pin, false);
+        pump_.pulse_pin = 0;
+    }
+}
+
+// A pump starter is a DOL contactor with momentary START and STOP coils. It is
+// never held: the ON event pulses START and the OFF event pulses STOP, then
+// both coils are released by servicePulses().
+void Controller::startPumpPulse(bool on) {
+    if (!pumpPin()) return;
+    uint16_t ms = on ? cfg_.pump.pulse_on_ms : cfg_.pump.pulse_off_ms;
+    if (ms < 20) ms = 20;
+    uint8_t pin = on || !pumpOffPin() ? pumpPin() : pumpOffPin();
+    if (pump_.pulsing && pump_.pulse_pin && pump_.pulse_pin != pin)
+        writeRelayPin(pump_.pulse_pin, false);
+    pump_.pulsing = true;
+    pump_.pulse_pin = pin;
+    pump_.pulse_until_ms = pulse_clock_ms_ + (unsigned long)ms;
+    writeRelayPin(pin, true);
 }
 
 void Controller::setPumpOutput(bool on, time_t now) {
-    writeRelayPin(pumpPin(), on);
+    if (!pump_.present) return;
+    startPumpPulse(on);
     pump_.on = on;
     pump_.last_change = now;
 }
@@ -108,16 +130,27 @@ void Controller::begin(const Config &cfg) {
             writeRelayPin(pin, false);
         }
     }
-    digitalWrite(pumpPin(), RELAY_ACTIVE_LOW ? HIGH : LOW);
-    pinMode(pumpPin(), OUTPUT);
-    writeRelayPin(pumpPin(), false);
+    pump_.present = pumpPin() != 0;
+    if (pump_.present) {
+        uint8_t pins[2] = {pumpPin(), pumpOffPin()};
+        for (uint8_t n = 0; n < 2; n++) {
+            digitalWrite(pins[n], RELAY_ACTIVE_LOW ? HIGH : LOW);
+            pinMode(pins[n], OUTPUT);
+            writeRelayPin(pins[n], false);
+        }
+    }
 }
 
 void Controller::applyConfig(const Config &cfg) {
     // Profile changes can remap outputs. Park the old pins, then make every
     // newly mapped pin an idle HIGH (active-LOW relay released) output.
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) releaseRelayPins(i);
-    writeRelayPin(pumpPin(), false);
+    if (pump_.present) {
+        writeRelayPin(pumpPin(), false);
+        writeRelayPin(pumpOffPin(), false);
+    }
+    pump_.pulsing = false;
+    pump_.pulse_pin = 0;
     cfg_ = cfg;
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
         uint8_t pins[2] = {relayPin(i), relayOffPin(i)};
@@ -128,9 +161,16 @@ void Controller::applyConfig(const Config &cfg) {
             writeRelayPin(pin, false);
         }
     }
-    digitalWrite(pumpPin(), RELAY_ACTIVE_LOW ? HIGH : LOW);
-    pinMode(pumpPin(), OUTPUT);
-    writeRelayPin(pumpPin(), false);
+    pump_.present = pumpPin() != 0;
+    pump_.on = false;
+    if (pump_.present) {
+        uint8_t pins[2] = {pumpPin(), pumpOffPin()};
+        for (uint8_t n = 0; n < 2; n++) {
+            digitalWrite(pins[n], RELAY_ACTIVE_LOW ? HIGH : LOW);
+            pinMode(pins[n], OUTPUT);
+            writeRelayPin(pins[n], false);
+        }
+    }
 }
 
 void Controller::addEvent(const char *src, const char *msg, time_t now) {
@@ -179,7 +219,7 @@ bool Controller::relayWanted(uint8_t i, bool power, uint16_t now_min,
     const ChannelConfig &ch = cfg_.channels[i];
     int8_t rec = recurringAction(i, now);
     recurring_active = rec >= 0;
-    if (!power) return false;
+    (void)power;   // mains sense is informational; relay GPIOs follow mode/schedule
     if (ch.mode == MODE_ON) return true;
     if (ch.mode == MODE_OFF) return false;
     if (rec == 0) return false;
@@ -265,18 +305,9 @@ void Controller::tick(time_t now, bool power_present, bool tank_full,
             ch.enabled &&
             scheduleActive(ch.days, ch.win, ch.nwin, weekday, now_min);
 
-        if (!power_present) {
-            if (rt.on || rt.output) {
-                rt.on = false;
-                rt.output = false;
-                rt.pulsing = false;
-                rt.last_change = now;
-                releaseRelayPins(i);
-            }
-            rt.recurring_active = false;
-            continue;
-        }
-
+        // Mains sense no longer gates relay GPIOs. The power input is still
+        // reported in status/events, but manual and schedule commands drive
+        // the output pins even while power.present is false.
         if (ch.mode == MODE_OFF) rt.boost_until = 0;
 
         bool rec_active = false;
@@ -294,7 +325,20 @@ void Controller::tick(time_t now, bool power_present, bool tank_full,
         }
     }
 
-    // ---- dedicated pump output ----------------------------------------------
+    // ---- dedicated pump starter (removable per profile) -----------------------
+    pump_.present = pumpPin() != 0;
+    if (!pump_.present) {
+        pump_.on = false;
+        pump_.want = false;
+        pump_.external_run = false;
+        pump_.pulsing = false;
+        pump_.pulse_pin = 0;
+        pump_.last_off = now;
+        pump_.fault_latched = false;
+        pump_.fault[0] = '\0';
+        return;
+    }
+
     const PumpConfig &p = cfg_.pump;
     if (pump_.boost_until != 0 && now >= pump_.boost_until)
         pump_.boost_until = 0;

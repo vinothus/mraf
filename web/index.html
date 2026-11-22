@@ -269,7 +269,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
       <div class="card stat"><div class="k">Active equipment</div><div class="v" id="stat-active">--</div><div class="s">of 12 mapped outputs</div></div>
     </div>
 
-    <div class="card" style="margin-bottom:14px">
+    <div class="card" id="pump-card" style="margin-bottom:14px">
       <div class="card-head">
         <h2 id="pump-name">5HP Pump</h2>
         <span id="pump-state" class="badge">--</span>
@@ -340,12 +340,12 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
   <section id="tab-sched" hidden>
     <div class="toolbar">
       <h2>Daily schedules &amp; equipment mapping</h2><div class="spacer"></div>
-      <label class="row"><input type="checkbox" id="pump-enabled"> Pump enabled</label>
+      <label class="row" id="pump-enabled-label"><input type="checkbox" id="pump-enabled"> Pump starter enabled</label>
       <button class="action primary" id="save-config">Save all</button>
     </div>
     <div class="hint" style="margin-bottom:12px">Each relay is mapped to an equipment type and a location. Motor/contactor outputs can use a momentary pulse instead of a held relay.</div>
     <div id="schedules"></div>
-    <h2 style="margin:18px 0 10px">5HP Pump schedule</h2>
+    <h2 id="pump-sched-heading" style="margin:18px 0 10px">5HP Pump starter schedule</h2>
     <div id="pump-schedule"></div>
   </section>
 
@@ -427,7 +427,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
       <div class="card">
         <h3>Hardware self test</h3>
         <div class="btnrow"><button class="action primary" id="run-selftest" type="button">Run self test</button></div>
-        <div class="hint" id="self-test-result">Checks the ESP32, RTC, power rail, radio, GPIO driver map, every relay coil, pump contactor, current sensor and float inputs. Relay outputs are pulsed briefly and released.</div>
+        <div class="hint" id="self-test-result">Checks the ESP32, RTC, power rail, radio, GPIO driver map, every relay coil, pump starter START/STOP coils, current sensor and float inputs. Relay outputs are pulsed briefly and released.</div>
       </div>
       <div class="card">
         <h3>Time &amp; maintenance</h3>
@@ -445,6 +445,7 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
     <div class="toolbar">
       <h2>Profiles &amp; pin mapping</h2><div class="spacer"></div>
       <select id="profile-select" class="profile-select" aria-label="Select profile"></select>
+      <button class="action" id="profile-pull" type="button">Pull from device</button>
       <button class="action" id="profile-new" type="button">+ New profile</button>
       <button class="action" id="profile-copy" type="button">Duplicate</button>
       <button class="action danger" id="profile-delete" type="button">Delete</button>
@@ -452,14 +453,20 @@ html[data-theme="light"] .eq-card.on .eq-icon{border-color:#8fcfae;box-shadow:0 
       <button class="action" id="profile-save" type="button">Save profile</button>
       <button class="action primary" id="profile-apply" type="button">Apply to device</button>
     </div>
-    <div class="hint" style="margin-bottom:12px">Customise an ESP32-WROOM-32 (38-pin DevKit V1) installation: choose how many relays this profile needs (new profiles start with one), map each relay and the pump contactor to a GPIO, then set the daily ON/OFF window and momentary pulse timings. The dashboard only shows the relays defined by the active profile. For a motor with a contactor and START/STOP push buttons, enable "pulse" and enter a second GPIO: the ON time pulses START for the configured milliseconds, the OFF time pulses STOP for its configured milliseconds, then both coils release. A motor without a contactor uses one GPIO that stays on for the window. GPIO 34–39 are input-only; 4 and 5 are used by the RTC. Duplicate GPIOs are rejected.</div>
+    <div class="hint" style="margin-bottom:12px">Customise an ESP32-WROOM-32 (38-pin DevKit V1) installation. The agriculture profile includes a pump starter by default: it always uses two GPIOs and momentary pulses — the ON event pulses START, the OFF event pulses STOP, then both coils release. Dryland (manavari) farms have no pump, so use "Delete pump starter" to remove it from the profile; the dashboard then hides the pump card. Each relay can also use a contactor: enable "pulse" and set a second STOP GPIO. GPIO 34–39 are input-only; 4 and 5 are used by the RTC. Duplicate GPIOs are rejected. The profile library is cached in this browser; use "Pull from device" to discard stale cached profiles and reload the active profile from the controller.</div>
     <div class="card" style="margin-bottom:14px">
       <div class="card-head"><h3>Profile details</h3><span class="pill" id="profile-kind">editable</span></div>
       <div class="prof-fields">
         <div class="field"><label>Profile ID (used by the device)</label><input id="prof-id" maxlength="23" placeholder="greenhouse"></div>
         <div class="field"><label>Display name</label><input id="prof-name" maxlength="39" placeholder="Greenhouse"></div>
         <div class="field"><label>Location label</label><input id="prof-unit" maxlength="15" placeholder="Zone / Room / Bay / Line"></div>
-        <div class="field"><label>Pump contactor GPIO</label><select id="prof-pump-pin"></select></div>
+        <div class="field" id="prof-pump-pin-wrap"><label>Pump starter START GPIO</label><select id="prof-pump-pin"></select></div>
+        <div class="field" id="prof-pump-off-wrap"><label>Pump starter STOP GPIO</label><select id="prof-pump-off"></select></div>
+        <div class="field" id="prof-pump-add-wrap"><label>Pump starter</label><button class="action" id="profile-pump-add" type="button">+ Add pump starter</button></div>
+      </div>
+      <div class="row" id="prof-pump-actions" style="margin-top:10px">
+        <span class="small-note">The pump starter is always pulse-driven: ON pulses START, OFF pulses STOP.</span>
+        <button class="action small danger" id="profile-pump-delete" type="button">Delete pump starter</button>
       </div>
       <div class="hint" id="prof-summary"></div>
     </div>
@@ -1032,10 +1039,12 @@ function renderRelays(){
     const gpio = contactor
       ? `START GPIO ${esc(r.pin)} · STOP GPIO ${esc(r.pin_off)}`
       : `GPIO ${esc(r.pin)}`;
-    const live = pulsing && r.output_pin ? ` · active GPIO ${esc(r.output_pin)}` : "";
+    const live = r.output_pin ? ` · active GPIO ${esc(r.output_pin)}` : "";
+    const noMains = !!(status.power && status.power.present === false);
+    const mainsNote = noMains ? ` · mains sense absent (GPIO still active)` : "";
     const meta = r.enabled
-      ? `${esc(EQ_LABEL[eq]||eq)} · ${gpio} · ${esc(r.zone||"")} · ${esc(r.mode)} · ${windows}${live}`
-      : r.pin ? `disabled · ${gpio}${live}` : "disabled";
+      ? `${esc(EQ_LABEL[eq]||eq)} · ${gpio} · ${esc(r.zone||"")} · ${esc(r.mode)} · ${windows}${live}${mainsNote}`
+      : r.pin ? `disabled · ${gpio}${live}${mainsNote}` : "disabled";
     const pulse = r.pulse_mode
       ? `<div class="pulsebox">
            <span class="small-note">pulse ${contactor ? "START" : "ON"}</span>
@@ -1136,6 +1145,11 @@ function renderDash(){
   }
   $("#stat-active").textContent = `${active} / 12`;
 
+  const hasPump = pump.present !== false && (!config || !config.pins || config.pins.pump !== 0);
+  $("#pump-card").hidden = !hasPump;
+  $("#pump-enabled-label").hidden = !hasPump;
+  $("#pump-sched-heading").hidden = !hasPump;
+  $("#pump-schedule").hidden = !hasPump;
   $("#pump-name").textContent = pump.name || "5HP Pump";
   const state = pump.state || "IDLE";
   const st = $("#pump-state");
@@ -1303,8 +1317,10 @@ function pinOptions(selected){
 }
 function defaultProfiles(){
   const chans = config && Array.isArray(config.channels) ? config.channels : [];
-  const pins = config && config.pins ? copyJson(config.pins) : {relays:copyJson(DEFAULT_RELAY_PINS), pump:33};
+  const pins = config && config.pins ? copyJson(config.pins) : {relays:copyJson(DEFAULT_RELAY_PINS), pump:33, pump_off:15};
   pins.relays = pins.relays || copyJson(DEFAULT_RELAY_PINS);
+  if(pins.pump === undefined || pins.pump === null) pins.pump = 33;
+  if(!pins.pump_off) pins.pump_off = 15;
   while(pins.relays.length < 12) pins.relays.push(DEFAULT_RELAY_PINS[pins.relays.length]);
   return Object.keys(PROFILE_INFO).map(id=>{
     const unit = PROFILE_INFO[id].unit;
@@ -1343,7 +1359,10 @@ function normalizeProfile(p){
   while(out.pins.relays.length < out.relay_count) out.pins.relays.push(DEFAULT_RELAY_PINS[out.pins.relays.length]);
   out.pins.relays_off = Array.isArray(out.pins.relays_off) ? out.pins.relays_off.slice(0,out.relay_count) : copyJson(out.pins.relays);
   while(out.pins.relays_off.length < out.relay_count) out.pins.relays_off.push(out.pins.relays[out.pins.relays_off.length]);
-  out.pins.pump = Number(out.pins.pump)||33;
+  out.pins.pump = (out.pins.pump === undefined || out.pins.pump === null)
+    ? 33 : (Number(out.pins.pump)||0);
+  const off = Number(out.pins.pump_off)||15;
+  out.pins.pump_off = out.pins.pump ? (off === Number(out.pins.pump) ? 12 : off) : 0;
   out.channels = Array.isArray(out.channels) ? out.channels.slice(0,out.relay_count) : [];
   while(out.channels.length < out.relay_count) out.channels.push(newProfileChannel(out.channels.length));
   out.channels = out.channels.map((ch,i)=>Object.assign(newProfileChannel(i), ch, {id:i+1}));
@@ -1372,7 +1391,8 @@ function syncActiveProfileFromConfig(){
     chans.map((ch,i)=>Number(ch.pin)||DEFAULT_RELAY_PINS[i]||DEFAULT_RELAY_PINS[0]);
   p.pins.relays_off = Array.isArray(pins.relays_off) ? pins.relays_off.slice(0,p.relay_count) :
     chans.map((ch,i)=>Number(ch.pin_off)||p.pins.relays[i]||DEFAULT_RELAY_PINS[i]);
-  p.pins.pump = Number(pins.pump)||p.pins.pump||33;
+  p.pins.pump = pins.pump === undefined ? (p.pins.pump||33) : (Number(pins.pump)||0);
+  p.pins.pump_off = pins.pump_off === undefined ? (p.pins.pump_off||15) : (Number(pins.pump_off)||0);
   p.channels = chans.map((ch,i)=>{
     const base = p.channels[i] || newProfileChannel(i);
     const w = ch.windows && ch.windows[0] ? ch.windows[0] : null;
@@ -1410,12 +1430,20 @@ function renderProfiles(){
   $("#prof-id").value = p.id;
   $("#prof-name").value = p.name || p.id;
   $("#prof-unit").value = p.unit || "Zone";
-  $("#prof-pump-pin").innerHTML = pinOptions(p.pins.pump);
+  const hasPump = !!p.pins.pump;
+  $("#prof-pump-pin").innerHTML = pinOptions(p.pins.pump || 33);
+  $("#prof-pump-off").innerHTML = pinOptions(p.pins.pump_off || 15);
+  $("#prof-pump-pin-wrap").hidden = !hasPump;
+  $("#prof-pump-off-wrap").hidden = !hasPump;
+  $("#prof-pump-actions").hidden = !hasPump;
+  $("#prof-pump-add-wrap").hidden = hasPump;
   $("#profile-kind").textContent = Object.prototype.hasOwnProperty.call(PROFILE_INFO,p.id) ? "built-in" : "custom";
   const stops = p.channels.map((ch,i)=>({ch,i})).filter(x=>x.ch.equipment==="motor" && x.ch.pulse_mode &&
     p.pins.relays_off[x.i] !== p.pins.relays[x.i]).map(x=>`R${x.i+1}:${p.pins.relays_off[x.i]}`);
   $("#prof-summary").textContent = `${p.relay_count} relay${p.relay_count===1?"":"s"} · GPIO ${p.pins.relays.join(", ")}` +
-    (stops.length ? ` · STOP ${stops.join(", ")}` : "") + ` · pump GPIO ${p.pins.pump}`;
+    (stops.length ? ` · STOP ${stops.join(", ")}` : "") +
+    (hasPump ? ` · pump starter START GPIO ${p.pins.pump} / STOP GPIO ${p.pins.pump_off} (pulse)`
+             : " · no pump starter (dryland profile)");
   $("#profile-relays").innerHTML = p.channels.map((ch,i)=>`
     <div class="sched-row prof-row ${ch.equipment==="motor" && ch.pulse_mode ? "contactor" : ""}" data-prof-ch="${i}">
       <div class="sched-head">
@@ -1451,7 +1479,7 @@ function syncContactorRow(row){
   const off = $(".prof-pin-off", row);
   const onPin = Number($(".prof-pin",row).value);
   if(Number(off.value) !== onPin) return;
-  const used = new Set([Number($("#prof-pump-pin").value)]);
+  const used = new Set([Number($("#prof-pump-pin").value), Number($("#prof-pump-off").value)]);
   $$("#profile-relays [data-prof-ch]").forEach(r=>{
     used.add(Number($(".prof-pin",r).value));
     if(r !== row && r.classList.contains("contactor")) used.add(Number($(".prof-pin-off",r).value));
@@ -1465,7 +1493,11 @@ function collectProfile(){
   if(!id) throw new Error("Enter a profile ID");
   const name = $("#prof-name").value.trim() || id;
   const unit = $("#prof-unit").value.trim() || "Zone";
-  const pumpPin = Number($("#prof-pump-pin").value);
+  const hasPump = !$("#prof-pump-pin-wrap").hidden;
+  const pumpPin = hasPump ? Number($("#prof-pump-pin").value) : 0;
+  const pumpOff = hasPump ? Number($("#prof-pump-off").value) : 0;
+  if(hasPump && (!pumpPin || !pumpOff || pumpPin === pumpOff))
+    throw new Error("The pump starter needs two different GPIOs (START and STOP)");
   const channels = $$("#profile-relays [data-prof-ch]").map(row=>{
     const pin = Number($(".prof-pin",row).value);
     const contactor = $(".equipment",row).value === "motor" && $(".pulse_mode",row).checked;
@@ -1486,19 +1518,21 @@ function collectProfile(){
     off:$(".off",row).value
     };
   });
-  const used = channels.map(c=>c.pin).concat([pumpPin]);
-  if(new Set(used).size !== used.length) throw new Error("Each relay and the pump need a unique GPIO");
+  const used = channels.map(c=>c.pin).concat(hasPump ? [pumpPin, pumpOff] : []);
+  if(new Set(used).size !== used.length)
+    throw new Error("Each relay and both pump starter GPIOs need a unique GPIO");
   const stops = channels.filter(c=>c.pin_off !== c.pin).map(c=>c.pin_off);
   if(new Set(stops).size !== stops.length || stops.some(p=>used.includes(p)))
     throw new Error("Each motor contactor STOP GPIO must be unique and not shared");
   return {id,name,unit,relay_count:channels.length,
-    pins:{relays:channels.map(c=>c.pin),relays_off:channels.map(c=>c.pin_off),pump:pumpPin},channels};
+    pins:{relays:channels.map(c=>c.pin),relays_off:channels.map(c=>c.pin_off),
+      pump:pumpPin,pump_off:pumpOff},channels};
 }
 async function profileRelayAdd(){
   try{
     const p = collectProfile();
     if(p.relay_count >= 12) throw new Error("A profile supports at most 12 relays");
-    const used = p.pins.relays.concat(p.pins.relays_off, [p.pins.pump]);
+    const used = p.pins.relays.concat(p.pins.relays_off, p.pins.pump ? [p.pins.pump, p.pins.pump_off] : []);
     const pin = GPIO_PINS.find(x=>!used.includes(x));
     if(pin === undefined) throw new Error("No free GPIO available");
     p.relay_count++;
@@ -1525,6 +1559,34 @@ async function profileRelayDelete(index){
     renderProfiles();
   }catch(e){ toast("Delete relay failed: " + e.message, 5000); }
 }
+async function profilePumpDelete(){
+  try{
+    const p = collectProfile();
+    if(!p.pins.pump) return;
+    if(!confirm(`Delete the pump starter from profile '${p.name}'? Dryland profiles do not need a pump.`)) return;
+    p.pins.pump = 0;
+    p.pins.pump_off = 0;
+    p.pumpstarter = false;
+    const list = ensureProfiles().map(x=>x.id===p.id ? p : x);
+    await saveProfiles(list, "Pump starter deleted from this profile.");
+    renderProfiles();
+  }catch(e){ toast("Delete pump starter failed: " + e.message, 5000); }
+}
+async function profilePumpAdd(){
+  try{
+    const p = collectProfile();
+    const used = p.pins.relays.concat(p.pins.relays_off);
+    const start = [33,25,26,27,12].find(x=>!used.includes(x));
+    const stop = [15,12].find(x=>!used.includes(x) && x!==start);
+    if(start === undefined || stop === undefined) throw new Error("No free GPIO pair for the pump starter");
+    p.pins.pump = start;
+    p.pins.pump_off = stop;
+    p.pumpstarter = true;
+    const list = ensureProfiles().map(x=>x.id===p.id ? p : x);
+    await saveProfiles(list, "Pump starter added with START/STOP pulse GPIOs.");
+    renderProfiles();
+  }catch(e){ toast("Add pump starter failed: " + e.message, 5000); }
+}
 async function saveProfiles(list, msg="Profile saved.", quiet=false){
   config.profiles = list.map(normalizeProfile);
   try{ localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(config.profiles)); }catch(_){ }
@@ -1539,6 +1601,36 @@ async function saveProfiles(list, msg="Profile saved.", quiet=false){
     toast("Profile saved in this browser (controller keeps only the active profile)", 5000);
   }
   if(msg && !quiet) toast(msg);
+}
+async function profilePull(){
+  try{
+    const fresh = await api("/api/config");
+    let library = null, source = "built-in defaults";
+    if(await controllerIsSimulator()){
+      try{
+        const doc = await api("/api/profiles");
+        if(Array.isArray(doc.profiles) && doc.profiles.length){
+          library = doc.profiles;
+          source = "controller profile library";
+        }
+      }catch(_){ }
+    }
+    if(!library){
+      try{ localStorage.removeItem(PROFILE_STORE_KEY); }catch(_){ }
+      library = defaultProfiles();
+    }
+    config = fresh;
+    config.profiles = library.map(normalizeProfile);
+    syncActiveProfileFromConfig();
+    schedulesRendered = false;
+    recurringRendered = false;
+    profileSelectedId = (config.device && config.device.profile) || config.profiles[0].id;
+    fillSettings();
+    renderDash();
+    renderProfiles();
+    loadStatus();
+    toast(`Profiles pulled from ${source}. Cached copy refreshed.`, 5000);
+  }catch(e){ toast("Pull from device failed: " + e.message, 5000); }
 }
 async function profileSave(){
   try{
@@ -1562,7 +1654,7 @@ async function profileNew(copy){
     const np = copyJson(base);
     np.id = id; np.name = suggested.trim();
     if(!copy){
-      const used = np.pins.relays.concat(np.pins.relays_off, [np.pins.pump]);
+      const used = np.pins.relays.concat(np.pins.relays_off, np.pins.pump ? [np.pins.pump, np.pins.pump_off] : []);
       const first = GPIO_PINS.find(p=>!used.includes(p)) || DEFAULT_RELAY_PINS[0];
       np.relay_count = 1;
       np.channels = [newProfileChannel(0)];
@@ -1927,8 +2019,11 @@ document.addEventListener("click", async (ev)=>{
   }
   if(ev.target.id === "refresh-tunnel"){ loadStatus().then(renderTunnel); return; }
   if(ev.target.id === "profile-save"){ profileSave(); return; }
+  if(ev.target.id === "profile-pull"){ profilePull(); return; }
   if(ev.target.id === "profile-new"){ profileNew(false); return; }
   if(ev.target.id === "profile-relay-add"){ profileRelayAdd(); return; }
+  if(ev.target.id === "profile-pump-delete"){ profilePumpDelete(); return; }
+  if(ev.target.id === "profile-pump-add"){ profilePumpAdd(); return; }
   const del = ev.target.closest("#profile-relays .relay-del");
   if(del){ profileRelayDelete(Number(del.dataset.del)); return; }
   if(ev.target.id === "profile-copy"){ profileNew(true); return; }

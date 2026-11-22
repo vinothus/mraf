@@ -1,109 +1,69 @@
 WEBVTT
 
 1
-00:00:01.000 --> 00:00:03.000
-Spring Boot server: admin fleet view — SIM-000001 confirmed and online
+00:00:00.700 --> 00:00:03.710
+ESP32 simulator: agri profile has 12 relays and a pump starter
 
 2
-00:00:03.000 --> 00:00:05.000
-Server device dashboard: 12 relay cards from relay_count=12
+00:00:03.710 --> 00:00:07.180
+Profiles tab: pump starter START GPIO 33 / STOP GPIO 15
 
 3
-00:00:05.000 --> 00:00:07.000
-Server control command queued to the controller over CoAP
+00:00:07.180 --> 00:00:10.180
+Always pulse-driven: ON pulses START, OFF pulses STOP, then release
 
 4
-00:00:07.000 --> 00:00:10.000
-Server Profiles & schedules: each relay record maps one dashboard card
+00:00:10.180 --> 00:00:13.340
+Duplicate the profile as Dryland farming
 
 5
-00:00:10.000 --> 00:00:13.000
-Deleting relay records in the server reduces relay_count to 2
+00:00:13.340 --> 00:00:16.940
+Dryland / manavari farms have no pump: delete the pump starter
 
 6
-00:00:13.000 --> 00:00:16.000
-Server dashboard now shows only 2 relays
+00:00:16.940 --> 00:00:21.490
+Apply to device: pins.pump = 0 removes the starter
 
 7
-00:00:16.000 --> 00:00:18.000
-Adding a record on the server grows the active relay count
+00:00:21.490 --> 00:00:25.380
+Dashboard hides the pump card and no pump GPIO is pulsed
 
 8
-00:00:18.000 --> 00:00:20.000
-Server dashboard updated to 3 relay cards
+00:00:25.380 --> 00:00:28.810
+Profiles now offers + Add pump starter instead of GPIO fields
 
 9
-00:00:20.000 --> 00:00:22.000
-ESP32 firmware dashboard (native simulator): same profile model
+00:00:28.810 --> 00:00:32.940
+Reload confirms the dryland profile persists without a pump
 
 10
-00:00:22.000 --> 00:00:23.000
-Existing agri profile: 12 relay records with GPIO and timing
+00:00:32.940 --> 00:00:37.400
+Hardware self test: Pump starter reported as not fitted
 
 11
-00:00:23.000 --> 00:00:25.000
-Editing a profile: names, windows, GPIO and pulse timing
+00:00:37.400 --> 00:00:41.180
+Back to agri: pump starter is present on GPIO 33 / 15
 
 12
-00:00:25.000 --> 00:00:26.000
-Motor R5 contactor: START GPIO 18 / STOP GPIO 32
+00:00:41.180 --> 00:00:44.650
+Apply agri to restore the original profile
 
 13
-00:00:26.000 --> 00:00:30.000
-ON pulses START 2500 ms; OFF pulses STOP 2500 ms, then release
+00:00:44.650 --> 00:00:47.520
+Pump card returns on the dashboard
 
 14
-00:00:30.000 --> 00:00:31.000
-Dashboard follows profile relay_count — 12 cards
+00:00:47.520 --> 00:00:50.080
+Manual ON pulses START GPIO 33, then releases
 
 15
-00:00:31.000 --> 00:00:35.000
-Pulse START: GPIO 18 energises for 2500 ms, then releases
+00:00:50.080 --> 00:00:52.640
+Manual OFF pulses STOP GPIO 15, then releases
 
 16
-00:00:35.000 --> 00:00:39.000
-Pulse STOP: GPIO 32 energises for 2500 ms, then releases
+00:00:52.640 --> 00:00:55.770
+Reload confirms the original agri profile is intact
 
 17
-00:00:39.000 --> 00:00:42.000
-Delete a relay record from an existing profile
-
-18
-00:00:42.000 --> 00:00:44.000
-After deleting R12: 11 dashboard cards
-
-19
-00:00:44.000 --> 00:00:47.000
-New profile: starts with one relay record
-
-20
-00:00:47.000 --> 00:00:50.000
-micro profile applied — dashboard has 1 card
-
-21
-00:00:50.000 --> 00:00:53.000
-Add one relay — dashboard grows to two cards
-
-22
-00:00:53.000 --> 00:00:55.000
-After adding: 2 relay cards
-
-23
-00:00:55.000 --> 00:00:57.000
-Reload confirms the custom relay count persists
-
-24
-00:00:57.000 --> 00:01:00.000
-Settings: hardware self test checks outputs and sensors
-
-25
-00:01:00.000 --> 00:01:01.000
-PASS · 12/12 checks passed · 2026-11-21 13:21:13
-
-26
-00:01:01.000 --> 00:01:02.000
-Relay result names the physical START/STOP GPIOs and pulse/release
-
-27
-00:01:02.000 --> 00:01:04.000
-Pump contactor, current sensor and float inputs reported per hardware
+00:00:55.770 --> 00:01:00.200
+Delete or add the pump starter per farm — no pump GPIO for dryland

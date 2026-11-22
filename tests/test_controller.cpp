@@ -37,6 +37,8 @@ static Config baseConfig() {
     std::memset(&c, 0, sizeof(c));
     std::strncpy(c.device_name, "test", sizeof(c.device_name) - 1);
     c.max_boost_min = 180;
+    c.pump_pin = PUMP_RELAY_PIN;
+    c.pump_off_pin = PUMP_OFF_RELAY_PIN;
 
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
         c.channels[i].mode = MODE_AUTO;
@@ -45,6 +47,9 @@ static Config baseConfig() {
 
     PumpConfig &p = c.pump;
     p.enabled = true;
+    p.pulse_mode = true;
+    p.pulse_on_ms = 100;
+    p.pulse_off_ms = 100;
     p.days = 127;
     p.mode = MODE_AUTO;
     p.nwin = 1;
@@ -409,6 +414,47 @@ static void testRecurringRelay() {
     check(c2.relay(0).recurring_active, "off rule still marks active");
 }
 
+static void testPumpStarterTwoPinsAndDelete() {
+    Config cfg = baseConfig();
+    cfg.pump.pulse_on_ms = 100;
+    cfg.pump.pulse_off_ms = 50;
+    Controller c;
+    c.begin(cfg);
+    const time_t t0 = at(0, 6, 0);
+
+    c.setPulseClock(1000);
+    tick(c, t0, true, false, false, 0.0f);
+    check(c.pump().present, "pump starter present in agri profile");
+    check(c.pump().pulsing && c.pump().pulse_pin == cfg.pump_pin,
+          "START pulse energises START GPIO");
+    check(g_mraf_pin_state[cfg.pump_pin] == LOW, "START coil active low");
+    check(g_mraf_pin_state[cfg.pump_off_pin] == HIGH, "STOP coil idle during START");
+
+    c.setPulseClock(1100);
+    c.servicePulses();
+    check(g_mraf_pin_state[cfg.pump_pin] == HIGH, "START coil released after pulse");
+
+    tick(c, at(0, 6, 30), true, false, false, 7.0f);
+    check(c.pump().pulsing && c.pump().pulse_pin == cfg.pump_off_pin,
+          "STOP pulse energises STOP GPIO");
+    check(g_mraf_pin_state[cfg.pump_off_pin] == LOW, "STOP coil active low");
+    c.setPulseClock(1200);
+    c.servicePulses();
+    check(g_mraf_pin_state[cfg.pump_off_pin] == HIGH, "STOP coil released after pulse");
+
+    Config dry = baseConfig();
+    dry.pump_pin = 0;
+    dry.pump_off_pin = 0;
+    Controller d;
+    d.begin(dry);
+    tick(d, t0, true, false, false, 0.0f);
+    check(!d.pump().present, "pump starter deleted from dryland profile");
+    check(!d.pump().on && !d.pump().pulsing, "deleted starter stays idle");
+    check(g_mraf_pin_state[PUMP_RELAY_PIN] == HIGH &&
+          g_mraf_pin_state[PUMP_OFF_RELAY_PIN] == HIGH,
+          "deleted starter GPIOs stay released");
+}
+
 int main() {
     testScheduledStartStop();
     testFloatInterlocks();
@@ -421,6 +467,7 @@ int main() {
     testPulseRelay();
     testRelayCount();
     testMotorContactorTwoPins();
+    testPumpStarterTwoPinsAndDelete();
     testRecurringRelay();
 
     if (failures) {

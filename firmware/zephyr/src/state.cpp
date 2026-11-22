@@ -274,8 +274,16 @@ void mraf_build_status(JsonDocument &doc)
     const PumpConfig &p = g_ctrl.config().pump;
     const PumpRuntime &pr = g_ctrl.pump();
     JsonObject pj = doc["pump"].to<JsonObject>();
+    pj["present"] = pr.present;
     pj["name"] = p.name;
     pj["enabled"] = p.enabled;
+    pj["pulse_mode"] = true;
+    pj["start_pin"] = g_ctrl.config().pump_pin;
+    pj["stop_pin"] = pr.present ? g_ctrl.config().pump_off_pin : 0;
+    pj["output_pin"] = pr.pulsing ? pr.pulse_pin : 0;
+    pj["pulsing"] = pr.pulsing;
+    pj["pulse_on_ms"] = p.pulse_on_ms;
+    pj["pulse_off_ms"] = p.pulse_off_ms;
     pj["days"] = p.days;
     pj["mode"] = modeName(p.mode);
     pj["on"] = pr.on;

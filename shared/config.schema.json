@@ -24,14 +24,17 @@
       "description": "Number of active relays; channels/status are trimmed to this length."},
     "pins": {
       "type": "object",
-      "description": "Runtime ESP32-WROOM output map for the active relays and pump contactor.",
+      "description": "Runtime ESP32-WROOM output map for the active relays and pump starter.",
       "properties": {
         "relays": {"type": "array", "minItems": 1, "maxItems": 12,
           "items": {"type": "integer", "minimum": 0, "maximum": 39}},
         "relays_off": {"type": "array", "minItems": 1, "maxItems": 12,
           "description": "Optional STOP/contactor GPIO per relay; equal to relays[i] when unused.",
           "items": {"type": "integer", "minimum": 0, "maximum": 39}},
-        "pump": {"type": "integer", "minimum": 0, "maximum": 39, "default": 33}
+        "pump": {"type": "integer", "minimum": 0, "maximum": 39, "default": 33,
+          "description": "Pump starter START pulse GPIO; 0 removes the starter (dryland farming)."},
+        "pump_off": {"type": "integer", "minimum": 0, "maximum": 39, "default": 15,
+          "description": "Pump starter STOP pulse GPIO; must differ from pump. Always pulse-driven."}
       }
     },
     "profiles": {

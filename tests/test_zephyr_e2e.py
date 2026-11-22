@@ -147,7 +147,7 @@ class ZephyrE2ETests(unittest.TestCase):
         self.assertIn("ESP32 controller", names)
         self.assertIn("GPIO driver map", names)
         self.assertIn("Relay 1 driver", names)
-        self.assertIn("Pump contactor", names)
+        self.assertIn("Pump starter", names)
         self.assertIn("Current sensor", names)
 
     def test_03_dashboard_served(self):
@@ -156,8 +156,10 @@ class ZephyrE2ETests(unittest.TestCase):
         self.assertIn("text/html", headers.get("Content-Type", ""))
         self.assertIn("<title>நீர்காவலன்".encode("utf-8"), payload)
         self.assertIn(b'id="theme-toggle"', payload)
+        self.assertIn(b'id="profile-pull"', payload)
         self.assertIn(b'html[data-theme="light"]', payload)
         self.assertIn(b"delete cfg.profiles;", payload)
+        self.assertIn(b"active GPIO", payload)
 
     def test_04_config_roundtrip(self):
         status, config = request_json("/api/config")

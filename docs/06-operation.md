@@ -32,14 +32,16 @@ Software commands take effect on the next controller tick (about 1 s).
 
 - **Auto**: follow the schedule and boost. Safety interlocks remain active.
 - **On**: request the load continuously. For the pump, this still respects
-  tank-full, sump-dry, minimum-off, recovery delay and fault latches.
+  tank-full, sump-dry, minimum-off, recovery delay and fault latches. Relay
+  GPIOs now follow the requested mode/schedule even when `power.present` is
+  `false`; mains-sense is reported in status and events but no longer gates
+  relay outputs. The dashboard shows `mains sense absent (GPIO still active)`.
 - **Off**: force the load off. The pump records the stop time for minimum-off.
 - **Boost**: temporarily runs a load in Auto mode for N minutes, capped by
   `max_boost_min` (default 180).
-- **USB-only power**: set `safety.assume_mains_present` to `true` in
-  `Settings` when the controller has no mains-sense feed. Schedules and manual
-  commands then operate without the outage gate; float/current/fault interlocks
-  remain active.
+- **USB-only power**: `safety.assume_mains_present` is no longer required for
+  relay control; leave it off to keep `power.present` reporting the real sense
+  input. It still affects pump outage recovery when set.
 
 ## Default schedules
 
@@ -63,6 +65,13 @@ uses the previous day's mask.
 
 ## Pump behaviour
 
+- The pump starter uses two GPIOs: START (GPIO33 by default) and STOP
+  (GPIO15 by default). Every ON pulses START, every OFF pulses STOP, and both
+  coils release immediately afterwards.
+- For dryland / manavari farming with no pump, delete the starter in **Profiles**
+  using **Delete pump starter** (or set `pins.pump` to `0` in the API). The
+  dashboard then hides the pump card and no pump GPIO is pulsed. Use **+ Add
+  pump starter** to restore it.
 - The pump starts only inside a schedule/boost or in manual On, subject to
   minimum-off, recovery delay and safety interlocks.
 - The pump stops immediately on tank full, sump dry, mains loss, mode Off or a

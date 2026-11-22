@@ -62,6 +62,9 @@ struct ChannelConfig {
 struct PumpConfig {
     char name[24];
     bool enabled;
+    bool pulse_mode;                    // always true for a pump starter
+    uint16_t pulse_on_ms;               // START coil pulse
+    uint16_t pulse_off_ms;              // STOP coil pulse
     uint8_t days;
     uint8_t nwin;
     SchedWindow win[MAX_WINDOWS];
@@ -106,7 +109,8 @@ struct Config {
     uint8_t relay_count;                // active relays (1..MAX_CHANNELS)
     uint8_t relay_pins[MAX_CHANNELS];   // runtime relay GPIO map (profile tab)
     uint8_t relay_off_pins[MAX_CHANNELS]; // STOP/contactor GPIO map (0 = same as relay_pins)
-    uint8_t pump_pin;                   // runtime pump contactor GPIO
+    uint8_t pump_pin;                   // runtime pump starter START GPIO (0 = no starter)
+    uint8_t pump_off_pin;               // runtime pump starter STOP GPIO
 
     char wifi_ssid[33];
     char wifi_pass[65];
@@ -144,6 +148,10 @@ struct RelayRuntime {
 
 struct PumpRuntime {
     bool on;
+    bool present;                       // false when the profile deleted the starter
+    bool pulsing;
+    uint8_t pulse_pin;
+    unsigned long pulse_until_ms;
     bool want;
     bool schedule_active;
     bool boost_active;

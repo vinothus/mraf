@@ -44,6 +44,7 @@ GPIO_PINS = frozenset({2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23,
                        25, 26, 27, 32, 33})
 DEFAULT_RELAY_PINS = [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27]
 DEFAULT_PUMP_PIN = 33
+DEFAULT_PUMP_OFF_PIN = 15
 EQUIPMENT = ("valve", "light", "motor", "fan", "pump", "socket", "heater",
              "door", "other")
 REPEATS = ("daily", "weekly", "monthly", "yearly")
@@ -262,6 +263,8 @@ def _pins(value: Any, label: str) -> dict:
         out.append(_int(raw, DEFAULT_RELAY_PINS[i], 0, 39,
                         f"{label}: relay {i + 1} GPIO"))
     pump = _int(value.get("pump"), DEFAULT_PUMP_PIN, 0, 39, f"{label}: pump GPIO")
+    pump_off = _int(value.get("pump_off"), DEFAULT_PUMP_OFF_PIN, 0, 39,
+                    f"{label}: pump stop GPIO")
     off_raw = value.get("relays_off", [])
     if not isinstance(off_raw, list) or len(off_raw) > MAX_CHANNELS:
         raise ConfigError(f"{label}: relays_off must be an array of at most 12 GPIOs")
@@ -269,21 +272,33 @@ def _pins(value: Any, label: str) -> dict:
     for i in range(MAX_CHANNELS):
         raw = off_raw[i] if i < len(off_raw) else out[i]
         out_off.append(_int(raw, out[i], 0, 39, f"{label}: relay {i + 1} stop GPIO"))
-    used = out + [pump]
+    # pump = 0 removes the starter from the profile (dryland / manavari farming)
+    if pump:
+        if pump not in GPIO_PINS:
+            raise ConfigError(f"{label}: GPIO {pump} is not a safe output pin")
+        if not pump_off:
+            pump_off = DEFAULT_PUMP_OFF_PIN
+        if pump_off not in GPIO_PINS or pump_off == pump:
+            raise ConfigError(f"{label}: pump stop GPIO must be safe and different from start")
+    else:
+        pump_off = 0
+    used = out + ([pump] if pump else [])
     for pin in used:
         if pin not in GPIO_PINS:
             raise ConfigError(f"{label}: GPIO {pin} is not a safe output pin")
     if len(set(used)) != len(used):
         raise ConfigError(f"{label}: each relay and the pump need a unique GPIO")
+    stop_pins = [pump_off] if pump_off else []
     for i, pin in enumerate(out_off):
         if pin == out[i]:
             continue
         if pin not in GPIO_PINS:
             raise ConfigError(f"{label}: GPIO {pin} is not a safe output pin")
-        if pin in used:
+        if pin in used + stop_pins:
             raise ConfigError(f"{label}: STOP GPIO {pin} is already in use")
         used.append(pin)
-    return {"relays": out, "relays_off": out_off, "pump": pump}
+    return {"relays": out, "relays_off": out_off, "pump": pump,
+            "pump_off": pump_off}
 
 
 def _profile(value: Any, index: int) -> dict:
@@ -403,6 +418,9 @@ def normalize_config(cfg: dict) -> dict:
         raise ConfigError("pump must be an object")
     p["name"] = str(p.get("name") or "5HP Pump")[:23]
     p["enabled"] = bool(p.get("enabled", True))
+    p["pulse_mode"] = True
+    p["pulse_on_ms"] = _int(p.get("pulse_on_ms"), 600, 20, 10000, "pump: pulse_on_ms")
+    p["pulse_off_ms"] = _int(p.get("pulse_off_ms"), 600, 20, 10000, "pump: pulse_off_ms")
     p["days"] = _int(p.get("days"), 127, 0, 127, "pump: days")
     p["mode"] = str(p.get("mode", "auto"))
     if p["mode"] not in MODES:
@@ -651,6 +669,10 @@ class RelayRT:
 @dataclass
 class PumpRT:
     on: bool = False
+    present: bool = True
+    pulsing: bool = False
+    pulse_pin: int = 0
+    pulse_until: float = 0.0
     want: bool = False
     schedule: bool = False
     fault_latched: bool = False
@@ -681,6 +703,7 @@ class FarmController:
         self._prepare()
 
     def _prepare(self) -> None:
+        self.pump.present = bool(self.cfg["pins"].get("pump"))
         self.ch_windows = [
             [(parse_hhmm(w["on"]), parse_hhmm(w["off"])) for w in ch["windows"]]
             for ch in self.cfg["channels"]
@@ -775,8 +798,8 @@ class FarmController:
         ch = self.cfg["channels"][i]
         rec = self._recurring_action(i, now)
         self.relays[i].recurring = rec is not None
-        if not power:
-            return False
+        # Mains sense is informational only: relay GPIOs follow mode/schedule
+        # even while power.present is false.
         if ch["mode"] == "on":
             return True
         if ch["mode"] == "off":
@@ -811,12 +834,35 @@ class FarmController:
         else:
             rt.output = on
 
+    def _start_pump_pulse(self, on: bool, now: float) -> None:
+        """A pump starter is a DOL contactor: START pulses on, STOP pulses off."""
+        pins = self.cfg["pins"]
+        if not pins.get("pump"):
+            return
+        p = self.cfg["pump"]
+        start, stop = pins["pump"], pins.get("pump_off") or 0
+        pin = start if on or not stop else stop
+        self.pump.pulsing = True
+        self.pump.pulse_pin = pin
+        ms = p["pulse_on_ms"] if on else p["pulse_off_ms"]
+        self.pump.pulse_until = now + max(20, int(ms)) / 1000.0
+
+    def _set_pump_output(self, on: bool, now: float) -> None:
+        if not self.pump.present:
+            return
+        self._start_pump_pulse(on, now)
+        self.pump.on = on
+        self.pump.last_change = now
+
     def service_pulses(self, now: float) -> None:
         for rt in self.relays:
             if rt.pulsing and now >= rt.pulse_until:
                 rt.pulsing = False
                 rt.output = False
                 rt.pulse_pin = 0
+        if self.pump.pulsing and now >= self.pump.pulse_until:
+            self.pump.pulsing = False
+            self.pump.pulse_pin = 0
 
     def _pump_wanted(self, power: bool, tank_full: bool, sump_dry: bool,
                      now_min: int, weekday: int, now: float) -> bool:
@@ -890,14 +936,6 @@ class FarmController:
             rt.schedule = bool(ch["enabled"]) and self._schedule_active(
                 self.ch_windows[i], ch["days"], weekday, now_min
             )
-            if not power:
-                if rt.on or rt.output:
-                    rt.on = False
-                    rt.output = False
-                    rt.pulsing = False
-                    rt.last_change = now
-                rt.recurring = False
-                continue
             if ch["mode"] == "off":
                 rt.boost_until = 0.0
             want = self._relay_wanted(i, power, now_min, weekday, now)
@@ -913,9 +951,20 @@ class FarmController:
                     now,
                 )
 
-        # pump
+        # pump starter (removable per profile)
         p = self.cfg["pump"]
         pr = self.pump
+        pr.present = bool(self.cfg["pins"].get("pump"))
+        if not pr.present:
+            pr.on = False
+            pr.want = False
+            pr.external_run = False
+            pr.pulsing = False
+            pr.pulse_pin = 0
+            pr.fault_latched = False
+            pr.fault = ""
+            pr.last_off = now
+            return
         if pr.boost_until and now >= pr.boost_until:
             pr.boost_until = 0.0
         pr.schedule = bool(p["enabled"]) and self._schedule_active(
@@ -927,14 +976,12 @@ class FarmController:
 
         if not power:
             if pr.on:
-                pr.on = False
-                pr.last_change = now
+                self._set_pump_output(False, now)
             pr.last_off = now
             pr.external_run = False
         elif pr.fault_latched:
             if pr.on:
-                pr.on = False
-                pr.last_change = now
+                self._set_pump_output(False, now)
             pr.last_off = now
         else:
             if was_external and not flow:
@@ -960,16 +1007,14 @@ class FarmController:
                     if p["mode"] == "on":
                         pr.need_edge = False
                     if min_ok and rec_ok and edge_ok:
-                        pr.on = True
-                        pr.last_change = now
+                        self._set_pump_output(True, now)
                         pr.run_start = now
                         self.add_event("pump", "started", now)
             else:
                 if pr.on:
                     reason = ("tank full" if tank_full else
                               ("sump dry" if sump_dry else "schedule"))
-                    pr.on = False
-                    pr.last_change = now
+                    self._set_pump_output(False, now)
                     pr.last_off = now
                     self.add_event("pump", f"stopped ({reason})", now)
 
@@ -986,7 +1031,7 @@ class FarmController:
 
     def _trip(self, reason: str, now: float) -> None:
         if self.pump.on:
-            self.pump.on = False
+            self._set_pump_output(False, now)
         self.pump.last_off = now
         self.pump.last_change = now
         self.pump.fault_latched = True
@@ -1049,8 +1094,7 @@ class FarmController:
             if mode == "on":
                 pr.need_edge = False
             if mode == "off" and pr.on:
-                pr.on = False
-                pr.last_change = now
+                self._set_pump_output(False, now)
                 pr.last_off = now
             self.add_event("control", f"pump mode {mode}", now)
 
@@ -1066,8 +1110,7 @@ class FarmController:
         self.cfg["pump"]["mode"] = "off"
         self.pump.boost_until = 0.0
         if self.pump.on:
-            self.pump.on = False
-            self.pump.last_change = now
+            self._set_pump_output(False, now)
             self.pump.last_off = now
         self.add_event("control", "ALL OFF", now)
 
@@ -1349,8 +1392,16 @@ class SimApp:
             },
             "relays": relays,
             "pump": {
+                "present": pr.present,
                 "name": p["name"],
                 "enabled": p["enabled"],
+                "pulse_mode": True,
+                "start_pin": self.cfg["pins"].get("pump", 0),
+                "stop_pin": self.cfg["pins"].get("pump_off", 0) if pr.present else 0,
+                "output_pin": pr.pulse_pin if pr.pulsing else 0,
+                "pulsing": pr.pulsing,
+                "pulse_on_ms": p["pulse_on_ms"],
+                "pulse_off_ms": p["pulse_off_ms"],
                 "days": p["days"],
                 "mode": p["mode"],
                 "on": pr.on,
@@ -1423,12 +1474,16 @@ class SimApp:
             add("Wi-Fi radio", bool(wifi["connected"]),
                 f"{wifi['ssid']} · {wifi['ip']} · {wifi['rssi']} dBm")
             pins = self.cfg["pins"]
-            used = pins["relays"][:len(self.cfg["channels"])] + [pins["pump"]]
+            used = pins["relays"][:len(self.cfg["channels"])]
+            if pins.get("pump"):
+                used += [pins["pump"], pins.get("pump_off") or 0]
             used += [pins["relays_off"][i] for i in range(len(self.cfg["channels"]))
                       if pins["relays_off"][i] != pins["relays"][i]]
             pin_ok = len(used) == len(set(used)) and all(p in GPIO_PINS for p in used)
             add("GPIO driver map", pin_ok,
-                f"{len(self.cfg['channels'])} relays + pump on unique safe GPIOs")
+                f"{len(self.cfg['channels'])} relays"
+                f"{' + pump START/STOP' if pins.get('pump') else ' (no pump starter)'} "
+                "on unique safe GPIOs")
 
             for relay in status["relays"]:
                 i = relay["id"] - 1
@@ -1452,9 +1507,26 @@ class SimApp:
                 add(f"Relay {relay['id']} driver", ok, detail)
 
             pump = status["pump"]
-            add("Pump contactor", pin_ok,
-                f"GPIO {pins['pump']} · state {pump['state']} · "
-                f"fault {'none' if not pump['fault'] else pump['fault']}")
+            if pump["present"]:
+                pr = self.controller.pump
+                saved = (pr.pulsing, pr.pulse_until, pr.pulse_pin)
+                pulse_ok = True
+                labels = []
+                for label, on, expected in (("START", True, pump["start_pin"]),
+                                            ("STOP", False, pump["stop_pin"])):
+                    self.controller._start_pump_pulse(on, now)
+                    observed = pr.pulse_pin
+                    self.controller.service_pulses(pr.pulse_until + 0.001)
+                    released = not pr.pulsing and pr.pulse_pin == 0
+                    pulse_ok = pulse_ok and observed == expected and released
+                    labels.append(f"{label} GPIO {expected}")
+                pr.pulsing, pr.pulse_until, pr.pulse_pin = saved
+                add("Pump starter", pin_ok and pulse_ok,
+                    f"{', '.join(labels)} · coil pulse/release OK · "
+                    f"state {pump['state']} · "
+                    f"fault {'none' if not pump['fault'] else pump['fault']}")
+            else:
+                add("Pump starter", True, "not fitted in this profile (dryland farming)")
             add("Current sensor", 0 <= pump["current_a"] <= 30,
                 f"ACS712 reads {pump['current_a']:.2f} A · "
                 f"zero {status['sensors']['acs_zero_mv']:.0f} mV")

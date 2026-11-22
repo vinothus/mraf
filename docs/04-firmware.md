@@ -54,7 +54,14 @@ A window with `on == off` is treated as never active to avoid ambiguity.
 
 ## Pump state machine
 
-The pump has its own dedicated relay output (GPIO33) and these runtime fields:
+The pump uses its own DOL starter with two GPIOs: `pins.pump` (START coil,
+GPIO33 by default) and `pins.pump_off` (STOP coil, GPIO15 by default). It is
+always pulse-driven: an ON request pulses the START coil for
+`pump.pulse_on_ms`, an OFF request pulses the STOP coil for
+`pump.pulse_off_ms`, and both coils release afterwards. Setting `pins.pump` to
+`0` deletes the starter from the active profile (dryland / manavari farming);
+the controller then ignores the pump schedule and the dashboard hides the pump
+card. The runtime state is:
 
 - `want`: the current logical request
 - `on`: the contactor command

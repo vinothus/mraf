@@ -71,6 +71,7 @@ void settingsDefaults(Config &cfg) {
         cfg.relay_off_pins[i] = cfg.relay_pins[i];
     }
     cfg.pump_pin = PUMP_RELAY_PIN;
+    cfg.pump_off_pin = PUMP_OFF_RELAY_PIN;
 
     copyStr(cfg.wifi_ssid, sizeof(cfg.wifi_ssid), "");
     copyStr(cfg.wifi_pass, sizeof(cfg.wifi_pass), "");
@@ -186,6 +187,9 @@ void settingsDefaults(Config &cfg) {
     PumpConfig &p = cfg.pump;
     copyStr(p.name, sizeof(p.name), "5HP Borewell Pump");
     p.enabled = true;
+    p.pulse_mode = true;
+    p.pulse_on_ms = DEFAULT_PULSE_ON_MS;
+    p.pulse_off_ms = DEFAULT_PULSE_OFF_MS;
     p.days = 0x7F;
     p.mode = MODE_AUTO;
     p.nwin = 0;
@@ -472,6 +476,11 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
             if (p < 0 || p > 39) { error = "pins: pump GPIO must be 0..39"; return false; }
             tmp.pump_pin = (uint8_t)p;
         }
+        if (!pins["pump_off"].isNull()) {
+            int p = pins["pump_off"].as<int>();
+            if (p < 0 || p > 39) { error = "pins: pump STOP GPIO must be 0..39"; return false; }
+            tmp.pump_off_pin = (uint8_t)p;
+        }
     }
 
     JsonArray chans = root["channels"].as<JsonArray>();
@@ -564,6 +573,18 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
         PumpConfig &pc = tmp.pump;
         jsonString(p["name"], pc.name, sizeof(pc.name), false);
         if (!p["enabled"].isNull()) pc.enabled = p["enabled"].as<bool>();
+        if (!p["pulse_mode"].isNull()) pc.pulse_mode = p["pulse_mode"].as<bool>();
+        if (!p["pulse_on_ms"].isNull()) {
+            int v = p["pulse_on_ms"].as<int>();
+            if (v < 20 || v > 10000) { error = "pump: pulse_on_ms must be 20..10000"; return false; }
+            pc.pulse_on_ms = (uint16_t)v;
+        }
+        if (!p["pulse_off_ms"].isNull()) {
+            int v = p["pulse_off_ms"].as<int>();
+            if (v < 20 || v > 10000) { error = "pump: pulse_off_ms must be 20..10000"; return false; }
+            pc.pulse_off_ms = (uint16_t)v;
+        }
+        pc.pulse_mode = true;   // a starter always pulses START and STOP
         if (!p["days"].isNull()) {
             int d = p["days"].as<int>();
             if (d < 0 || d > 127) { error = "pump: days must be 0..127"; return false; }
@@ -634,13 +655,25 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
             return false;
         }
     }
-    if (!safeOutputPin(tmp.pump_pin)) {
-        error = String("pins: pump GPIO ") + tmp.pump_pin + " is not a safe output pin";
-        return false;
+    // pins.pump = 0 removes the starter from the profile (dryland farming).
+    // A present starter always owns two distinct GPIOs: START and STOP.
+    if (!tmp.pump_pin) {
+        tmp.pump_off_pin = 0;
+    } else {
+        if (!safeOutputPin(tmp.pump_pin)) {
+            error = String("pins: pump START GPIO ") + tmp.pump_pin + " is not a safe output pin";
+            return false;
+        }
+        if (!tmp.pump_off_pin) tmp.pump_off_pin = PUMP_OFF_RELAY_PIN;
+        if (!safeOutputPin(tmp.pump_off_pin) || tmp.pump_off_pin == tmp.pump_pin) {
+            error = String("pins: pump STOP GPIO ") + tmp.pump_off_pin +
+                    " must be a safe output pin different from START";
+            return false;
+        }
     }
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
-        if (tmp.relay_pins[i] == tmp.pump_pin) {
-            error = "pins: pump GPIO must not be shared with a relay";
+        if (tmp.pump_pin && tmp.relay_pins[i] == tmp.pump_pin) {
+            error = "pins: pump START GPIO must not be shared with a relay";
             return false;
         }
         for (uint8_t j = i + 1; j < MAX_CHANNELS; j++) {
@@ -650,8 +683,9 @@ bool settingsFromJson(JsonDocument &doc, Config &cfg, String &error) {
             }
         }
         if (tmp.relay_off_pins[i] == tmp.relay_pins[i]) continue;
-        if (tmp.relay_off_pins[i] == tmp.pump_pin) {
-            error = "pins: STOP GPIO must not be shared with the pump";
+        if (tmp.pump_pin && (tmp.relay_off_pins[i] == tmp.pump_pin ||
+                             tmp.relay_off_pins[i] == tmp.pump_off_pin)) {
+            error = "pins: STOP GPIO must not be shared with the pump starter";
             return false;
         }
         for (uint8_t j = 0; j < MAX_CHANNELS; j++) {
@@ -693,6 +727,7 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
         offList.add(cfg.relay_off_pins[i] ? cfg.relay_off_pins[i] : cfg.relay_pins[i]);
     }
     pins["pump"] = cfg.pump_pin;
+    pins["pump_off"] = cfg.pump_off_pin;
     if (include_secrets) dev["auth_pass"] = cfg.auth_pass;
 
     JsonObject wifi = root["wifi"].to<JsonObject>();
@@ -795,6 +830,9 @@ void settingsToJson(const Config &cfg, JsonDocument &doc, bool include_secrets) 
     JsonObject pj = root["pump"].to<JsonObject>();
     pj["name"] = p.name;
     pj["enabled"] = p.enabled;
+    pj["pulse_mode"] = p.pulse_mode;
+    pj["pulse_on_ms"] = p.pulse_on_ms;
+    pj["pulse_off_ms"] = p.pulse_off_ms;
     pj["days"] = p.days;
     pj["mode"] = modeName(p.mode);
     JsonArray pw = pj["windows"].to<JsonArray>();

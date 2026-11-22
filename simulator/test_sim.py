@@ -182,6 +182,31 @@ class RelayTests(unittest.TestCase):
         app.sim_step(61)
         self.assertFalse(app.controller.relays[0].on)
 
+    def test_output_pin_reports_driven_gpio(self):
+        app = make_app()
+        app.control("relay", "on", 2)
+        app.sim_step(2)
+        relay = next(r for r in app.snapshot()["relays"] if r["id"] == 2)
+        self.assertTrue(relay["output"])
+        self.assertEqual(relay["output_pin"], 14)
+        app.control("relay", "off", 2)
+        app.sim_step(2)
+        relay = next(r for r in app.snapshot()["relays"] if r["id"] == 2)
+        self.assertFalse(relay["output"])
+        self.assertEqual(relay["output_pin"], 0)
+
+    def test_manual_on_drives_gpio_even_without_mains(self):
+        app = make_app()
+        app.sim_power(False)
+        app.control("relay", "on", 2)
+        app.sim_step(2)
+        relay = next(r for r in app.snapshot()["relays"] if r["id"] == 2)
+        self.assertEqual(relay["mode"], "on")
+        self.assertTrue(relay["on"])
+        self.assertTrue(relay["output"])
+        self.assertEqual(relay["output_pin"], 14)
+        self.assertFalse(app.snapshot()["power"]["present"])
+
 
 class ConfigTests(unittest.TestCase):
     def test_invalid_window_rejected(self):
@@ -371,7 +396,7 @@ class ApiTests(unittest.TestCase):
         names = [c["name"] for c in data["checks"]]
         self.assertIn("ESP32 controller", names)
         self.assertIn("Relay 1 driver", names)
-        self.assertIn("Pump contactor", names)
+        self.assertIn("Pump starter", names)
         relay = next(c for c in data["checks"] if c["name"] == "Relay 1 driver")
         self.assertIn("GPIO", relay["detail"])
         self.assertEqual(relay["status"], "pass")
@@ -528,6 +553,51 @@ class ProfileTests(unittest.TestCase):
     def test_stop_pin_must_be_unique(self):
         cfg = load_config(CONFIG)
         cfg["pins"]["relays_off"][0] = cfg["pins"]["relays"][1]
+        with self.assertRaises(ConfigError):
+            normalize_config(cfg)
+
+    def test_pump_starter_always_pulses_start_and_stop_gpio(self):
+        cfg = normalize_config(load_config(CONFIG))
+        self.assertEqual(cfg["pins"]["pump"], 33)
+        self.assertEqual(cfg["pins"]["pump_off"], 15)
+        self.assertTrue(cfg["pump"]["pulse_mode"])
+        ctrl = FarmController(cfg, timezone.utc)
+        ctrl.set_pump_mode("on", 0, 1000)
+        ctrl.tick(1000, True, False, False, 0.0, 12.8)
+        self.assertTrue(ctrl.pump.present)
+        self.assertTrue(ctrl.pump.pulsing)
+        self.assertEqual(ctrl.pump.pulse_pin, 33)
+        self.assertAlmostEqual(ctrl.pump.pulse_until, 1000.6)
+        ctrl.service_pulses(1000.61)
+        self.assertFalse(ctrl.pump.pulsing)
+        self.assertEqual(ctrl.pump.pulse_pin, 0)
+
+        cfg["pump"]["mode"] = "on"
+        ctrl = FarmController(cfg, timezone.utc)
+        ctrl.tick(1000, True, False, False, 0.0, 12.8)
+        ctrl.set_pump_mode("off", 0, 2000)
+        ctrl.tick(2000, True, False, False, 7.0, 12.8)
+        self.assertEqual(ctrl.pump.pulse_pin, 15)
+        self.assertAlmostEqual(ctrl.pump.pulse_until, 2000.6)
+        ctrl.service_pulses(2000.61)
+        self.assertFalse(ctrl.pump.pulsing)
+
+    def test_pump_starter_can_be_deleted_from_profile(self):
+        cfg = load_config(CONFIG)
+        cfg["pins"]["pump"] = 0
+        out = normalize_config(cfg)
+        self.assertEqual(out["pins"]["pump"], 0)
+        self.assertEqual(out["pins"]["pump_off"], 0)
+        app = SimApp(out, speed=0)
+        status = app.snapshot()
+        self.assertFalse(status["pump"]["present"])
+        self.assertEqual(status["pump"]["start_pin"], 0)
+        self.assertEqual(status["pump"]["stop_pin"], 0)
+        self.assertFalse(status["pump"]["pulsing"])
+
+    def test_pump_stop_gpio_must_be_distinct(self):
+        cfg = load_config(CONFIG)
+        cfg["pins"]["pump_off"] = cfg["pins"]["pump"]
         with self.assertRaises(ConfigError):
             normalize_config(cfg)
 

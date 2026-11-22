@@ -271,8 +271,14 @@ Validation rules include:
 - Times are `HH:MM`, 00:00-23:59.
 - Up to 4 windows per channel/pump.
 - `pins.relays` maps relay 1-12 to ESP32 GPIOs, `pins.relays_off` optionally
-  maps a second STOP/contactor GPIO for each relay, and `pins.pump` maps the
-  pump contactor. When a motor uses START/STOP push buttons, the ON window
+  maps a second STOP/contactor GPIO for each relay, `pins.pump` maps the pump
+  starter START pulse GPIO, and `pins.pump_off` maps its STOP pulse GPIO. A DOL
+  pump starter is **always** pulse-driven: the ON window pulses `pins.pump` for
+  `pump.pulse_on_ms` and the OFF window pulses `pins.pump_off` for
+  `pump.pulse_off_ms`; both coils then release. Set `pins.pump` to `0` to delete
+  the starter from a profile (dryland / manavari farming with no pump); the
+  dashboard then hides the pump card and the controller ignores the pump
+  schedule. When a motor relay uses START/STOP push buttons, the ON window
   pulses `relays[i]` for `pulse_on_ms` and the OFF window pulses
   `relays_off[i]` for `pulse_off_ms`; both coils then release. When
   `relays_off[i]` equals `relays[i]`, the single-GPIO latching relay behavior
@@ -284,14 +290,18 @@ Validation rules include:
   `channels` with a single
   `on`/`off` window plus `pulse_on_ms`/`pulse_off_ms`. The firmware applies the
   selected profile's pins/channels on "Apply to device"; the simulator stores
-  the library in its config file.
+  the library in its config file, while hardware keeps only the active profile
+  and the browser caches the library locally. Use **Pull from device** in the
+  Profiles tab to discard a stale browser cache and reload the active profile
+  from `/api/config` (or `/api/profiles` on the simulator).
 - Up to 8 recurring schedules. `repeat` is `daily`, `weekly`, `monthly` or
   `yearly`; `day_of_month` 1-31, `month` 1-12, `action` is `on`, `off` or
   `auto`, and channels are selected with `channel_mask` (bit 0 = relay 1) or a
   `channels` id array. Off rules win over on rules.
-- `POST /api/selftest` briefly pulses relay coils and the pump contactor and
-  returns `checks[]` with PASS/WARN/FAIL per ESP32 subsystem, relay coil,
-  contactor and sensor, plus an overall `summary`.
+- `POST /api/selftest` briefly pulses relay coils and the pump starter START and
+  STOP coils and returns `checks[]` with PASS/WARN/FAIL per ESP32 subsystem,
+  relay coil, contactor and sensor, plus an overall `summary`. A profile with no
+  pump starter reports it as not fitted instead of pulsing a GPIO.
 - CoAP `port` 1-65535, `path` starts with `/`, `interval_sec` 10-3600,
   `user`/`pass` are the server login stored at registration.
 - `min_off_sec` 30-3600, `max_run_min` 1-720, `recovery_delay_sec` 0-600,

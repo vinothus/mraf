@@ -32,8 +32,12 @@ static const uint8_t RELAY_PINS[MAX_CHANNELS] = {
     13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27
 };
 
-// Dedicated 5 HP 3-phase pump contactor relay.
-static const uint8_t PUMP_RELAY_PIN = 33;
+// Dedicated 5 HP 3-phase pump starter. The DOL contactor has separate
+// momentary START and STOP coils, so the starter always uses two GPIOs and is
+// pulsed rather than held on. Set pins.pump to 0 in a profile to remove the
+// starter (for example dryland / manavari farming with no pump).
+static const uint8_t PUMP_RELAY_PIN = 33;      // START coil
+static const uint8_t PUMP_OFF_RELAY_PIN = 15;  // STOP coil
 
 // Relay board outputs are active LOW on the common 16-channel module.
 static const bool RELAY_ACTIVE_LOW = true;

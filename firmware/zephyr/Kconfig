@@ -101,7 +101,7 @@ config MRAF_SETTINGS_JSON_MAX
 
 config MRAF_HTTP_REQ_MAX
 	int "Maximum HTTP request body size"
-	default 4096
+	default 8192
 	range 512 65536
 
 config MRAF_HTTP_RESP_MAX

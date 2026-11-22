@@ -63,12 +63,14 @@ private:
         uint8_t p = cfg_.relay_off_pins[i] ? cfg_.relay_off_pins[i] : relayPin(i);
         return p ? p : RELAY_PINS[i];
     }
-    uint8_t pumpPin() const { return cfg_.pump_pin ? cfg_.pump_pin : PUMP_RELAY_PIN; }
+    uint8_t pumpPin() const { return cfg_.pump_pin; }
+    uint8_t pumpOffPin() const { return cfg_.pump_off_pin ? cfg_.pump_off_pin : PUMP_OFF_RELAY_PIN; }
     void writeRelayPin(uint8_t pin, bool on) const;
     void releaseRelayPins(uint8_t i) const;
     void setRelayLogical(uint8_t i, bool on, time_t now);
     void setRelayPhysical(uint8_t i, bool on);
     void startPulse(uint8_t i, uint16_t ms, bool on);
+    void startPumpPulse(bool on);
     void setPumpOutput(bool on, time_t now);
     void tripPump(const char *reason, time_t now);
     bool relayWanted(uint8_t i, bool power, uint16_t now_min, uint8_t weekday,

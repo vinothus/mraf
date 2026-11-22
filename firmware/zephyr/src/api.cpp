@@ -321,11 +321,6 @@ static uint8_t selfTestRelayOffPin(const Config &cfg, uint8_t i)
     return pin ? pin : RELAY_PINS[i];
 }
 
-static uint8_t selfTestPumpPin(const Config &cfg)
-{
-    return cfg.pump_pin ? cfg.pump_pin : PUMP_RELAY_PIN;
-}
-
 static void selfTestWritePin(uint8_t pin, bool on)
 {
     digitalWrite(pin, RELAY_ACTIVE_LOW ? (on ? LOW : HIGH) : (on ? HIGH : LOW));
@@ -553,12 +548,17 @@ static int h_selftest(Route &, const struct http_request_ctx *, struct http_resp
             if (usedCount < sizeof(used)) used[usedCount++] = pin;
         }
     }
-    uint8_t pumpPin = selfTestPumpPin(cfg);
-    if (!selfTestSafePin(pumpPin)) pinsOk = false;
-    for (size_t j = 0; j < usedCount; j++) {
-        if (used[j] == pumpPin) pinsOk = false;
+    uint8_t pumpPin = cfg.pump_pin;
+    uint8_t pumpOffPin = cfg.pump_off_pin;
+    if (pumpPin) {
+        if (!selfTestSafePin(pumpPin) || !pumpOffPin || pumpOffPin == pumpPin ||
+            !selfTestSafePin(pumpOffPin)) pinsOk = false;
+        for (size_t j = 0; j < usedCount; j++) {
+            if (used[j] == pumpPin || used[j] == pumpOffPin) pinsOk = false;
+        }
     }
-    snprintf(detail, sizeof(detail), "%u relays + pump on unique safe GPIOs", (unsigned)channels);
+    snprintf(detail, sizeof(detail), "%u relays%s on unique safe GPIOs",
+             (unsigned)channels, pumpPin ? " + pump START/STOP" : " (no pump starter)");
     addSelfTestCheck(checks, "GPIO driver map", pinsOk, detail);
 
     k_mutex_lock(&g_state_lock, K_FOREVER);
@@ -595,23 +595,39 @@ static int h_selftest(Route &, const struct http_request_ctx *, struct http_resp
     }
 
     bool pumpOk = pinsOk;
-    if (selfTestSafePin(pumpPin)) {
-        int saved = digitalRead(pumpPin);
-        selfTestWritePin(pumpPin, true);
-        k_msleep(20);
-        bool energized = selfTestPinEnergized(pumpPin);
-        selfTestWritePin(pumpPin, false);
-        k_msleep(5);
-        bool released = !selfTestPinEnergized(pumpPin);
-        digitalWrite(pumpPin, saved);
-        pumpOk = pumpOk && energized && released;
+    char pumpLabels[64] = "";
+    if (pumpPin) {
+        uint8_t pumpPins[2] = {pumpPin, pumpOffPin};
+        for (int n = 0; n < 2; n++) {
+            uint8_t pin = pumpPins[n];
+            if (!selfTestSafePin(pin)) { pumpOk = false; continue; }
+            int saved = digitalRead(pin);
+            selfTestWritePin(pin, true);
+            k_msleep(20);
+            bool energized = selfTestPinEnergized(pin);
+            selfTestWritePin(pin, false);
+            k_msleep(5);
+            bool released = !selfTestPinEnergized(pin);
+            digitalWrite(pin, saved);
+            pumpOk = pumpOk && energized && released;
+            char label[24];
+            snprintf(label, sizeof(label), "%s GPIO %u", n == 0 ? "START" : "STOP",
+                     (unsigned)pin);
+            if (pumpLabels[0]) strncat(pumpLabels, ", ", sizeof(pumpLabels) - strlen(pumpLabels) - 1);
+            strncat(pumpLabels, label, sizeof(pumpLabels) - strlen(pumpLabels) - 1);
+        }
     }
     k_mutex_unlock(&g_state_lock);
     const char *pumpFault = pump["fault"] | "";
     if (!pumpFault[0]) pumpFault = "none";
-    snprintf(detail, sizeof(detail), "GPIO %u · state %s · fault %s", (unsigned)pumpPin,
-             (const char *)(pump["state"] | ""), pumpFault);
-    addSelfTestCheck(checks, "Pump contactor", pumpOk, detail, mains ? "fail" : "warn");
+    if (pumpPin) {
+        snprintf(detail, sizeof(detail), "%s · coil pulse/release OK · state %s · fault %s",
+                 pumpLabels, (const char *)(pump["state"] | ""), pumpFault);
+        addSelfTestCheck(checks, "Pump starter", pumpOk, detail, mains ? "fail" : "warn");
+    } else {
+        addSelfTestCheck(checks, "Pump starter", true,
+                         "not fitted in this profile (dryland farming)");
+    }
 
     float currentA = pump["current_a"] | 0.0f;
     int currentWhole = (int)currentA;

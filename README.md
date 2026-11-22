@@ -53,8 +53,8 @@ alive on a 12.8 V LiFePO4 battery while all relay coils drop out during a power 
   actions. No language model, identical grammar on ESP32, simulator and server.
 - Native simulator with accelerated clock, fault injection, HTTP API and
   scenario presets. Settings → **Run self test** checks the ESP32, RTC, power,
-  radio, every relay coil, pump contactor and sensors, then prints a hardware
-  result list.
+  radio, every relay coil, the two-coil pump starter and sensors, then prints a
+  hardware result list.
 - No custom PCB. Everything is DIN-rail terminals, ready-made modules and
   standard panel wiring.
 

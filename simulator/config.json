@@ -34,7 +34,7 @@
   "profiles": [
     {
       "id": "agri", "relay_count": 12, "name": "Agriculture", "unit": "Zone",
-      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 32, 2, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 32, 2, 21, 22, 23, 25, 26, 27], "pump": 33, "pump_off": 15},
       "channels": [
         {"id": 1, "name": "Shed Light", "zone": "Zone A", "equipment": "light", "enabled": true, "days": 127, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "18:00", "off": "22:00"},
         {"id": 2, "name": "Yard Light", "zone": "Zone A", "equipment": "light", "enabled": true, "days": 127, "pulse_mode": false, "pulse_on_ms": 600, "pulse_off_ms": 600, "on": "18:30", "off": "05:30"},
@@ -52,7 +52,7 @@
     },
     {
       "id": "home", "relay_count": 12, "name": "Home", "unit": "Room",
-      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33, "pump_off": 15},
       "channels": [
         {"id": 1, "name": "Hall Light", "zone": "Room 1", "equipment": "light"},
         {"id": 2, "name": "Porch Light", "zone": "Room 2", "equipment": "light"},
@@ -70,7 +70,7 @@
     },
     {
       "id": "godown", "relay_count": 12, "name": "Godown", "unit": "Bay",
-      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33, "pump_off": 15},
       "channels": [
         {"id": 1, "name": "Bay 1 Light", "zone": "Bay 1", "equipment": "light"},
         {"id": 2, "name": "Bay 2 Light", "zone": "Bay 2", "equipment": "light"},
@@ -88,7 +88,7 @@
     },
     {
       "id": "industry", "relay_count": 12, "name": "Industry", "unit": "Line",
-      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33},
+      "pins": {"relays": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "relays_off": [13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27], "pump": 33, "pump_off": 15},
       "channels": [
         {"id": 1, "name": "Line 1 Motor", "zone": "Line 1", "equipment": "motor", "pulse_mode": true},
         {"id": 2, "name": "Line 2 Motor", "zone": "Line 2", "equipment": "motor", "pulse_mode": true},
@@ -126,6 +126,9 @@
   "pump": {
     "name": "5HP Borewell Pump",
     "enabled": true,
+    "pulse_mode": true,
+    "pulse_on_ms": 600,
+    "pulse_off_ms": 600,
     "days": 127,
     "mode": "auto",
     "windows": [{"on": "06:00", "off": "07:00"}, {"on": "17:00", "off": "18:00"}],

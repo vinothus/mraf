@@ -87,8 +87,10 @@ them.
 The **Settings → Hardware self test → Run self test** button calls
 `POST /api/selftest`. The result is a hardware-oriented checklist: ESP32
 firmware, RTC clock, power rail and battery ADC, Wi-Fi radio, unique GPIO
-driver map, every relay coil (START/STOP pins are pulsed and released), pump
-contactor, current sensor and both float inputs. Each line reports PASS, WARN or
+driver map, every relay coil (START/STOP pins are pulsed and released), the
+pump starter START and STOP coils, current sensor and both float inputs. A
+profile with no pump starter reports `Pump starter · not fitted in this profile
+(dryland farming)`. Each line reports PASS, WARN or
 FAIL with the GPIO/pin and the reading that was checked, followed by an overall
 summary such as `PASS · 18/18 checks passed`. The simulator restores every
 relay output after the test.
